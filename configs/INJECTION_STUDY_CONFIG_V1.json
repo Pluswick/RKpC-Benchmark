@@ -1,0 +1,128 @@
+{
+  "schema_version": "1.0",
+  "status": "approved_and_frozen_before_execution",
+  "target": "log10(Kp)",
+  "legacy_fixed_config_sha256": "08d56f8a43bb4ab0c1b551f099e60dbe5b3f7b9ca13c73833f4c670954113c4f",
+  "models": ["gcn", "gine", "d_mpnn", "attentive_fp"],
+  "part1_conditions": [
+    "structure_only",
+    "onehot_late",
+    "onehot_early",
+    "physiology_late",
+    "physiology_early"
+  ],
+  "loto_conditions": [
+    "structure_only",
+    "physiology_late",
+    "physiology_early"
+  ],
+  "evaluation": {
+    "primary_split_types": ["parent_group", "scaffold"],
+    "part1_split_seeds": 10,
+    "loto_training_seeds": 5,
+    "primary_metric": "rmse_log10",
+    "secondary_metrics": ["mae_log10", "within_two_fold", "within_three_fold", "tissue_macro_rmse_log10"],
+    "practical_reference_delta_rmse": 0.05,
+    "practical_reference_role": "interpretive reference only; not an MCID or formal equivalence margin"
+  },
+  "context": {
+    "onehot_dimensions": 11,
+    "physiology_dimensions": 5,
+    "learned_context_embedding": false,
+    "physiology_scaling": "equal_tissue_standardization_fit_on_training_tissues",
+    "early_node_models": "repeat the raw context vector for every atom and concatenate before the first message-passing layer",
+    "early_d_mpnn": "repeat the raw context vector for every atom so it enters each directed-bond initial message through the source-atom feature vector",
+    "late": "concatenate the raw context vector with the pooled molecular representation before the prediction head"
+  },
+  "shared_neural": {
+    "batch_size": 64,
+    "max_epochs": 100,
+    "early_stopping_patience": 15,
+    "early_stopping_min_delta": 0.0001,
+    "gradient_clip_val": 5.0,
+    "loss": "mse",
+    "optimizer": "adamw",
+    "learning_rate": 0.001,
+    "weight_decay": 0.00001,
+    "seed_policy": "split_seed_for_part1_and_0_to_4_for_loto",
+    "deterministic_training": true
+  },
+  "gcn": {
+    "name": "bond-weighted molecular GCN",
+    "hidden_dim": 300,
+    "depth": 3,
+    "dropout": 0.1,
+    "aggregation": "global_mean_pool",
+    "residual": true,
+    "edge_weight": "softplus(linear(raw_bond_features)) + 1e-6",
+    "convolution": "GCNConv with learned positive bond weights and normalized self-loops",
+    "head_hidden_dim": 300,
+    "head_num_layers": 2
+  },
+  "gine": {
+    "name": "GINE",
+    "hidden_dim": 300,
+    "depth": 3,
+    "dropout": 0.1,
+    "aggregation": "global_mean_pool",
+    "residual": true,
+    "train_eps": true,
+    "edge_dim": "raw_bond_feature_dimension",
+    "update_mlp": "Linear(300,300)-ReLU-Linear(300,300)",
+    "head_hidden_dim": 300,
+    "head_num_layers": 2
+  },
+  "d_mpnn": {
+    "inherit_legacy_configuration": true,
+    "message_hidden_dim": 300,
+    "message_passing_depth": 3,
+    "message_dropout": 0.1,
+    "aggregation": "mean",
+    "head_hidden_dim": 300,
+    "head_num_layers": 2,
+    "head_dropout": 0.1
+  },
+  "attentive_fp": {
+    "inherit_legacy_configuration": true,
+    "hidden_channels": 200,
+    "num_layers": 2,
+    "num_timesteps": 2,
+    "graph_dropout": 0.1,
+    "head_hidden_dim": 200,
+    "head_num_layers": 2,
+    "head_dropout": 0.1
+  },
+  "inference": {
+    "part1_effect_unit": "paired split-seed RMSE difference",
+    "part1_ci": "percentile bootstrap over 10 paired split-seed differences",
+    "part1_test": "two-sided exact sign-flip over paired split-seed differences",
+    "fdr_family_context_vs_structure": 32,
+    "fdr_family_early_vs_late": 16,
+    "multiplicity": "Benjamini-Hochberg within each family",
+    "loto_prediction_aggregation": "average predictions over five training seeds before inference",
+    "loto_ci": "resample tissues equally, then parent_group_id clusters within tissue",
+    "sensitivity_role": "exploratory robustness; excluded from primary FDR families"
+  },
+  "property_stratification": {
+    "role": "secondary descriptive analysis; excluded from primary FDR families",
+    "threshold_source": "tertiles calculated before new experiments from 187 primary identity units without using Kp targets",
+    "MolWt": [270.354, 350.396],
+    "MolLogP": [1.3291, 2.5878],
+    "TPSA": [55.3, 75.27],
+    "RotB": [3.0, 6.0]
+  },
+  "scope": {
+    "planned_jobs": 1860,
+    "legacy_reuse_jobs": 580,
+    "new_jobs": 1280,
+    "primary_part1_jobs": 400,
+    "primary_loto_jobs": 660,
+    "ad_excluded_part1_jobs": 400,
+    "condition_specific_part1_jobs": 400,
+    "sensitivity_loto": false,
+    "onehot_loto": false,
+    "rf_xgb_svr": false,
+    "species_covariate": false,
+    "pbpk_simulation": false
+  }
+}

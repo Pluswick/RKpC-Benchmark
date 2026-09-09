@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.0",
+  "status": "frozen_before_vss_output_propagation",
+  "date_frozen": "2026-08-28",
+  "scope": "Kp-to-distribution-volume output propagation; not measured whole-body Vss validation",
+  "body_weight_g": 250.0,
+  "blood_volume_ml": 16.9,
+  "blood_to_plasma_ratio_assumption": 1.0,
+  "primary_endpoint": "observed-panel tissue distribution-volume contribution",
+  "exploratory_endpoint": "11-tissue distribution-volume contribution plus blood volume under Rb=1",
+  "formula": "DVI_panel_L_per_kg = sum_t(volume_t_ml * Kp_t) / body_weight_g",
+  "tissue_volumes_ml": {
+    "adipose": 10.0,
+    "bone": 15.8,
+    "brain": 1.8,
+    "gut": 11.0,
+    "heart": 0.8,
+    "kidneys": 2.3,
+    "liver": 10.3,
+    "lung": 1.6,
+    "muscle": 122.0,
+    "skin": 40.0,
+    "spleen": 0.6
+  },
+  "physiology_source": {
+    "citation": "Ball et al., Pharmaceutics 2014, Table 1; 250-g rat values sourced there from Brown et al. 1997",
+    "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC3978528/"
+  },
+  "representative_models": {
+    "parent_group": {"model": "gine", "full_context": "onehot_early"},
+    "scaffold": {"model": "d_mpnn", "full_context": "onehot_late"}
+  },
+  "full_grid_inference_scope": "parent_group GINE only",
+  "protocol_amendment": {
+    "date": "2026-08-28",
+    "trigger": "pre-use reproducibility audit",
+    "decision": "Scaffold D-MPNN remains in the observed-panel analysis but is excluded from full-grid inference because checkpoints were not retained and deterministic retraining did not reproduce the canonical predictions (maximum absolute difference 0.428791 log10).",
+    "interpretive_effect": "No scaffold full-grid values are reported; this avoids substituting a different fitted model after observing the discrepancy."
+  },
+  "comparators": ["structure_only", "additive_tissue_intercept", "full_context"],
+  "split_seeds": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+  "bootstrap_seed": 20260828,
+  "bootstrap_replicates": 10000,
+  "interpretation_constraints": [
+    "The 11-tissue endpoint omits residual tissues and does not establish absolute whole-body Vss accuracy.",
+    "The blood term assumes blood-to-plasma ratio of 1 because compound-specific ratios are unavailable.",
+    "PT and RR are evaluated only on their respective literature tissue panels.",
+    "The five complete 11-tissue experimental profiles are exploratory only."
+  ]
+}

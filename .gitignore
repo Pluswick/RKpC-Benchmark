@@ -1,0 +1,69 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+
+# Local environments and credentials
+.venv/
+venv/
+env/
+.conda/
+.env
+.env.*
+!.env.example
+
+# Packaging and build products
+build/
+dist/
+*.egg-info/
+
+# Editors and operating-system metadata
+.idea/
+.vscode/
+.fleet/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Request-only inputs and generated study artifacts
+data/inputs/*
+!data/inputs/.gitkeep
+data/generated_audit/
+results/
+splits/
+injection_study/
+additional_context_analyses/
+vss_output_propagation/
+manifests/
+figures/
+tmp*/
+lightning_logs/
+wandb/
+mlruns/
+checkpoints/
+
+# Model and serialized-object artifacts
+*.ckpt
+*.joblib
+*.pt
+*.pth
+*.pkl
+*.pickle
+*.log
+
+# Tabular data belong in the separate RKpC Benchmark record. The three
+# CSV files below are intentional code-repository assets.
+*.csv
+!MANIFEST_SHA256.csv
+!configs/config_hashes.csv
+!examples/synthetic_processed_data.csv
+*.xls
+*.xlsx
+*.parquet
+*.feather

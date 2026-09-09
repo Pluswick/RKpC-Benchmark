@@ -1,0 +1,78 @@
+{
+  "schema_version": "1.0",
+  "status": "locked_before_additional_execution",
+  "locked_date": "2026-08-27",
+  "role": "targeted post-hoc context-decomposition and preprocessing-robustness analyses",
+  "target": "log10(Kp)",
+  "base_injection_config": "manuscript/INJECTION_STUDY_CONFIG_V1.json",
+  "base_results_policy": "immutable_and_reused_only_for_paired_comparisons",
+  "models": ["gcn", "gine", "d_mpnn", "attentive_fp"],
+  "primary_context_decomposition": {
+    "dataset": "data/processed/rat_kp_long.csv",
+    "split_types": ["parent_group", "scaffold"],
+    "split_seeds": 10,
+    "new_neural_condition": "additive_tissue_intercept",
+    "model_equation": "prediction = molecular_encoder_and_head(SMILES) + centered_learned_tissue_intercept",
+    "tissue_intercept_constraint": "sum_to_zero_across_11_tissues",
+    "fit_policy": "jointly optimized using training rows only; validation rows used only for early stopping",
+    "descriptive_baselines": ["training_global_mean", "training_tissue_mean"],
+    "new_jobs": 80,
+    "contrast_families": {
+      "additive_vs_structure": {
+        "size": 8,
+        "delta": "RMSE(additive_tissue_intercept) - RMSE(structure_only)",
+        "multiplicity": "Benjamini-Hochberg within this separate 8-comparison family"
+      },
+      "context_vs_additive": {
+        "size": 32,
+        "comparisons": ["onehot_late", "onehot_early", "physiology_late", "physiology_early"],
+        "delta": "RMSE(tissue_aware) - RMSE(additive_tissue_intercept)",
+        "multiplicity": "Benjamini-Hochberg within this separate 32-comparison family"
+      }
+    },
+    "interpretation": {
+      "negative_additive_vs_structure": "tissue-specific location shifts add predictive value beyond molecule-only prediction",
+      "negative_context_vs_additive": "the tissue-context benefit is not fully explained by tissue-specific mean shifts and supports predictive non-additivity",
+      "mechanistic_caveat": "predictive non-additivity is not direct evidence of a biological mechanism"
+    }
+  },
+  "loto_raw_fraction_robustness": {
+    "dataset": "data/processed/rat_kp_long.csv",
+    "heldout_tissues": 11,
+    "training_seeds": 5,
+    "conditions": ["physiology_late", "physiology_early"],
+    "preprocessing": "four fraction columns retained on their native fraction scale; acidic_phospholipid_mg_g converted to g/g by division by 1000; no centering or statistical scaling",
+    "rationale": "remove train-tissue standard-deviation amplification and harmonize the sole mg/g column to a mass fraction without selecting a data-tuned clipping threshold",
+    "new_jobs": 440,
+    "primary_sensitivity_delta": "tissue-equal mean of RMSE(physiology_early_raw) - RMSE(physiology_late_raw)",
+    "uncertainty": "resample tissues equally and parent_group_id clusters within tissue after averaging five training-seed predictions",
+    "multiplicity": "Benjamini-Hochberg across four architecture-specific early-versus-late sensitivity tests",
+    "exploratory_diagnostics": [
+      "per-heldout-tissue maximum absolute train-only z score under the original preprocessing",
+      "nearest-training-tissue Euclidean distance in the original train-only standardized descriptor space",
+      "Spearman association between descriptor extrapolation magnitude and early-minus-late RMSE"
+    ],
+    "interpretation": {
+      "late_advantage_persists": "late-fusion robustness is not explained solely by z-score amplification of adipose physiology",
+      "adipose_only_changes": "the extreme adipose result is preprocessing-sensitive but the cross-tissue direction may remain",
+      "late_advantage_disappears": "the injection-position conclusion must be narrowed to the original standardization pipeline"
+    }
+  },
+  "shared_training": {
+    "inherit_base_architectures_and_hyperparameters": true,
+    "reuse_existing_splits": true,
+    "deterministic_training": true,
+    "nvidia_smi_physical_index": 1,
+    "pytorch_cuda_ordinal": 0,
+    "expected_gpu": "NVIDIA GeForce RTX 4090"
+  },
+  "scope": {
+    "new_jobs": 520,
+    "primary_additive_jobs": 80,
+    "raw_fraction_loto_jobs": 440,
+    "does_not_modify_original_primary_family": true,
+    "does_not_replace_original_loto_analysis": true,
+    "clipped_z_score_not_planned": true,
+    "log_or_logit_transform_not_planned": true
+  }
+}

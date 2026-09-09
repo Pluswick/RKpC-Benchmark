@@ -1,0 +1,6 @@
+row_index,parent_group_id,identity_unit_id,Drug,SMILES,Species,Tissue,Kp,log10Kp
+1,SYN001,SYN001,synthetic_ethanol,CCO,rat,heart,1.0,0.0
+2,SYN001,SYN001,synthetic_ethanol,CCO,rat,liver,1.5,0.1760912591
+3,SYN002,SYN002,synthetic_benzene,c1ccccc1,rat,heart,2.0,0.3010299957
+4,SYN002,SYN002,synthetic_benzene,c1ccccc1,rat,liver,3.0,0.4771212547
+

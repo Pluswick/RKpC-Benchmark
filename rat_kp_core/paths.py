@@ -1,0 +1,25 @@
+from pathlib import Path
+
+
+STUDY_ROOT = Path(__file__).resolve().parents[1]
+INPUT_DIR = STUDY_ROOT / "data" / "inputs"
+RAW_DATA_PATH = INPUT_DIR / "source_data_not_distributed.csv"
+LONG_DATA_PATH = INPUT_DIR / "rat_kp_long.csv"
+AD_SENSITIVITY_DATA_PATH = INPUT_DIR / "rat_kp_long_ad_sensitivity.csv"
+CONDITION_SENSITIVITY_DATA_PATH = INPUT_DIR / "rat_kp_long_condition_specific.csv"
+RANDOM_SPLIT_PATH = INPUT_DIR / "splits" / "random_seed0.csv"
+SCAFFOLD_SPLIT_PATH = INPUT_DIR / "splits" / "scaffold_seed0.csv"
+SPLIT_DIR = INPUT_DIR / "splits"
+LOTO_SPLIT_DIR = SPLIT_DIR / "loto"
+MANIFEST_DIR = STUDY_ROOT / "manifests"
+PRIMARY_JOB_MANIFEST_PATH = MANIFEST_DIR / "primary_jobs.csv"
+AD_SENSITIVITY_JOB_MANIFEST_PATH = MANIFEST_DIR / "ad_excluded_jobs.csv"
+CONDITION_SENSITIVITY_JOB_MANIFEST_PATH = MANIFEST_DIR / "condition_specific_jobs.csv"
+EXPERIMENT_RESULT_DIR = STUDY_ROOT / "results" / "experiments"
+ANALYSIS_RESULT_DIR = STUDY_ROOT / "results" / "analysis"
+FEATURE_CACHE_DIR = STUDY_ROOT / "data" / "cache"
+TABULAR_FEATURE_CACHE_PATH = FEATURE_CACHE_DIR / "tabular_molecular_features.npz"
+TABULAR_FEATURE_INDEX_PATH = FEATURE_CACHE_DIR / "tabular_molecular_features.json"
+PHYSIOLOGY_PATH = INPUT_DIR / "rat_tissue_physiology.csv"
+CONFIG_PATH = STUDY_ROOT / "configs" / "FIXED_MODEL_CONFIG_V2.json"
+SMOKE_RESULT_DIR = STUDY_ROOT / "results" / "smoke_test"

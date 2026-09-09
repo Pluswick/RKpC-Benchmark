@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ratkpcontext"
+version = "0.1.0"
+description = "Tissue-context GNN evaluation software for rat Kp prediction"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+license = { file = "LICENSE" }
+
+[tool.setuptools]
+packages = ["rat_kp_core", "rat_kp_fusion", "rat_kp_controls", "rat_kp_dvi"]

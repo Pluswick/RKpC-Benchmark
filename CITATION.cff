@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "Please cite the associated manuscript and this software."
+title: "RatKpContext: software for tissue-context GNN evaluation in rat Kp prediction"
+type: software
+authors:
+  - family-names: "Kim"
+    given-names: "Seonghan"
+  - family-names: "Cho"
+    given-names: "Hyunseo"
+  - family-names: "Jeong"
+    given-names: "Hyeon-Cheol"
+  - family-names: "Jeong"
+    given-names: "Moonkyu"
+  - family-names: "Ko"
+    given-names: "Kyong-Cheol"
+  - family-names: "Lee"
+    given-names: "Kyeong-Ryoon"
+  - family-names: "Jeong"
+    given-names: "Daesik"
+license: Apache-2.0

@@ -20,6 +20,12 @@ Required training columns:
 
 Additional audit columns may be present in the request package. Training code ignores columns that are not required by the frozen contract.
 
+## Source provenance boundary
+
+The private source workbook assigns one bibliographic source to every wide-format source row and is row-aligned with Kp_Data. Record-level source links remain in the request-only package. The RKpC Benchmark distributes `metadata/kp_data_source_bibliography.csv` and `.md`, which contain bibliographic facts and aggregate contribution counts only.
+
+When authorised local copies of both source files are available, `scripts/build_kp_data_source_bibliography.py` verifies row alignment, reapplies the frozen rat curation and aggregation chain, and regenerates those aggregate metadata files. It does not export compound names, structures, tissue-level Kp values, or record-level source links.
+
 ## Split files
 
 Each split file must contain:

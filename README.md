@@ -4,9 +4,9 @@ RatKpContext is the software repository supporting the manuscript **Dissecting T
 
 ## Repository boundary
 
-This repository contains code only: model definitions, training and evaluation pipelines, frozen configurations, synthetic tests, statistical analysis, DVI propagation, matched-panel construction, figure generation, and environment specifications. It does not contain the model-development dataset, PT/RR record-level values, real record-level predictions, frozen split assignments, or aggregate study outputs.
+This repository contains code only: model definitions, training and evaluation pipelines, frozen configurations, synthetic tests, statistical analysis, DVI propagation, matched-panel construction, figure generation, and environment specifications. It does not contain the model-development dataset, record-level source links, PT/RR record-level values, real record-level predictions, frozen split assignments, or aggregate study outputs.
 
-Publicly distributable aggregate outputs, run metadata, index-only split assignments, and their hashes are provided separately in the **RatKpContext Benchmark (RKpC Benchmark)** Zenodo record. The harmonized model-development dataset remains available from Kyeong-Ryoon Lee on reasonable request. Record-level PT/RR source transcriptions are not redistributed.
+Publicly distributable aggregate outputs, run metadata, index-only split assignments, a Kp_Data source bibliography with aggregate contribution counts, and their hashes are provided in the [**RatKpContext Benchmark (RKpC Benchmark)**](https://doi.org/10.5281/zenodo.22671239) Zenodo record. The harmonized model-development dataset and record-level source linkage remain available from Kyeong-Ryoon Lee on reasonable request. Record-level PT/RR source transcriptions are not redistributed.
 
 ## Recorded environment
 
@@ -35,7 +35,9 @@ The public tests use synthetic molecular inputs and exercise all four GNN archit
 2. Download the RKpC Benchmark from Zenodo and place its `results/` and `splits/` directories at the repository root.
 3. Follow `docs/data_schema.md` and `docs/reproducibility_spec.md`.
 
-`scripts/build_figures.py` reads public aggregate outputs from `results/aggregate/` and writes submission-ready `Fig1`–`Fig4` PNG and TIFF files to `submission_figures/`. Run `scripts/audit_submission_figures.py` after generation to verify dimensions, resolution, color mode, and file integrity. Chemical-space panels additionally require request-only structure-level inputs. The value-free `prepare_matched_panels.py` and `evaluate_manuscript_benchmarks.py` require authorised local PT/RR reconstructions and never distribute those record-level inputs or outputs.
+`scripts/build_figures.py` reads public aggregate outputs from `results/aggregate/` and writes submission-ready `Fig1`-`Fig4` PNG and TIFF files to `submission_figures/`. Run `scripts/audit_submission_figures.py` after generation to verify dimensions, resolution, color mode, and file integrity. Chemical-space panels additionally require request-only structure-level inputs. The value-free `prepare_matched_panels.py` and `evaluate_manuscript_benchmarks.py` require authorised local PT/RR reconstructions and never distribute those record-level inputs or outputs.
+
+`scripts/build_kp_data_source_bibliography.py` regenerates the aggregate source-provenance inventory distributed through Zenodo when authorised local copies of Kp_Data and its row-aligned source workbook are supplied. It emits bibliographic metadata and aggregate counts only; it does not write record-level source links or experimental values.
 
 ## License
 

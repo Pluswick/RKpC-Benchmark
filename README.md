@@ -35,7 +35,7 @@ The public tests use synthetic molecular inputs and exercise all four GNN archit
 2. Download the RKpC Benchmark from Zenodo and place its `results/` and `splits/` directories at the repository root.
 3. Follow `docs/data_schema.md` and `docs/reproducibility_spec.md`.
 
-`scripts/build_figures.py` reads public aggregate outputs from `results/aggregate/`. Chemical-space panels additionally require request-only structure-level inputs. The value-free `prepare_matched_panels.py` and `evaluate_manuscript_benchmarks.py` require authorised local PT/RR reconstructions and never distribute those record-level inputs or outputs.
+`scripts/build_figures.py` reads public aggregate outputs from `results/aggregate/` and writes submission-ready `Fig1`–`Fig4` PNG and TIFF files to `submission_figures/`. Run `scripts/audit_submission_figures.py` after generation to verify dimensions, resolution, color mode, and file integrity. Chemical-space panels additionally require request-only structure-level inputs. The value-free `prepare_matched_panels.py` and `evaluate_manuscript_benchmarks.py` require authorised local PT/RR reconstructions and never distribute those record-level inputs or outputs.
 
 ## License
 

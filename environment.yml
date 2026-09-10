@@ -16,3 +16,4 @@ dependencies:
       - scikit-learn==1.8.0
       - xgboost==3.2.0
       - matplotlib==3.10.9
+      - pillow==12.2.0

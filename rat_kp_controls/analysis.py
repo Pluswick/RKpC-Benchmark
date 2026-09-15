@@ -33,6 +33,7 @@ CONTEXT_CONDITIONS = (
 
 
 def load_predictions(plan: pd.DataFrame) -> pd.DataFrame:
+    """Load predictions for every planned additional-analysis job."""
     frames = []
     required = [
         "row_index", "parent_group_id", "identity_unit_id", "Drug", "SMILES",
@@ -58,6 +59,7 @@ def load_predictions(plan: pd.DataFrame) -> pd.DataFrame:
 
 
 def job_metrics(predictions: pd.DataFrame) -> pd.DataFrame:
+    """Compute per-job test metrics, including the tissue-macro RMSE."""
     grouping = [
         "job_id", "analysis", "stage", "model", "condition", "split_type",
         "split_seed", "heldout_tissue", "training_seed", "physiology_scaling",
@@ -74,6 +76,19 @@ def job_metrics(predictions: pd.DataFrame) -> pd.DataFrame:
 
 
 def tissue_mean_baselines(plan: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Score two structure-free baselines that use no molecular information.
+
+    The global-mean baseline predicts one training mean everywhere; the
+    tissue-mean baseline predicts each tissue's training mean. Their
+    difference measures how much of the apparent tissue-context benefit is
+    available from tissue identity alone, before any model is involved, and
+    so bounds what a tissue-aware model must beat to be informative.
+
+    Both means come from training rows only. An unseen test tissue raises,
+    since it would have no training mean to predict from.
+
+    Returns per-seed baseline metrics and the paired contrast summary.
+    """
     additive = plan[plan.analysis == "primary_context_decomposition"]
     rows = []
     for (split_type, split_seed), group in additive.groupby(["split_type", "split_seed"]):
@@ -131,6 +146,12 @@ def _paired_family(
     family: str,
     expected_size: int,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Estimate one family of paired split-seed contrasts with interval and test.
+
+    Each family is corrected for multiplicity on its own, separately from the
+    main study's families, so these targeted analyses cannot enlarge or dilute
+    the prespecified ones.
+    """
     deltas = []
     for (model, split_type), frame in combined_metrics.groupby(["model", "split_type"]):
         wide = frame.pivot(index="split_seed", columns="condition", values="rmse_log10")
@@ -171,6 +192,14 @@ def _paired_family(
 
 
 def primary_decomposition(new_metrics: pd.DataFrame):
+    """Decompose the tissue-context benefit against the additive control.
+
+    Two contrast families: the additive control against structure only, which
+    measures what a pure per-tissue location shift buys, and each full-context
+    condition against that control, which measures what remains once the shift
+    is accounted for. The second is the question the manuscript asks, and the
+    first is what makes it interpretable.
+    """
     standard = pd.read_csv(
         BASE_ANALYSIS_DIR / "all_job_metrics.csv", encoding="utf-8-sig"
     )
@@ -205,6 +234,7 @@ def primary_decomposition(new_metrics: pd.DataFrame):
 
 
 def _average_loto(predictions: pd.DataFrame) -> pd.DataFrame:
+    """Average the raw-fraction LOTO predictions over training seeds."""
     loto = predictions[predictions.analysis == "loto_raw_fraction_robustness"].copy()
     grouping = [
         "model", "condition", "Tissue", "parent_group_id", "identity_unit_id",
@@ -221,6 +251,7 @@ def _average_loto(predictions: pd.DataFrame) -> pd.DataFrame:
 
 
 def _loto_position_analysis(averaged: pd.DataFrame):
+    """Re-derive the LOTO fusion-position contrast on unstandardized descriptors."""
     tissue_rows = []
     inference_rows = []
     for model, frame in averaged.groupby("model", sort=True):
@@ -267,6 +298,14 @@ def _loto_position_analysis(averaged: pd.DataFrame):
 
 
 def descriptor_extrapolation_audit() -> pd.DataFrame:
+    """Quantify how far each held-out tissue lies outside the training tissues.
+
+    For every leave-one-tissue-out fold the physiology descriptors are
+    standardized on the ten training tissues and the held-out tissue is
+    expressed in those units. This gives a per-tissue extrapolation distance
+    that is independent of any model, so context effects can be read against
+    how far outside the training range each tissue sits.
+    """
     matrix = load_physiology().set_index("tissue")[PHYSIOLOGY_COLUMNS]
     rows = []
     for heldout in matrix.index:
@@ -290,6 +329,14 @@ def descriptor_extrapolation_audit() -> pd.DataFrame:
 
 
 def preprocessing_comparison(raw_tissues: pd.DataFrame, ood: pd.DataFrame):
+    """Compare fusion-position effects under standardized and raw context.
+
+    Standardizing the physiology descriptors on the training tissues means a
+    held-out tissue can land far outside the fitted range. Recomputing the
+    same contrasts on unit-harmonized, unstandardized descriptors shows
+    whether a conclusion depends on that preprocessing choice rather than on
+    the context itself.
+    """
     standard = pd.read_csv(
         BASE_ANALYSIS_DIR / "loto_tissue_effects.csv", encoding="utf-8-sig"
     )
@@ -326,6 +373,11 @@ def preprocessing_comparison(raw_tissues: pd.DataFrame, ood: pd.DataFrame):
 
 
 def main() -> None:
+    """Run the additional analyses and write their tables and manifest.
+
+    Refuses to start unless the locked configuration still matches its recorded
+    checksum.
+    """
     load_config(require_locked=True)
     plan = build_plan()
     predictions = load_predictions(plan)

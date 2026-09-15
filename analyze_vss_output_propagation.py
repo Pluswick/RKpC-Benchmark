@@ -1,3 +1,8 @@
+"""Run the DVI output-propagation analysis and report output row counts.
+
+Entry point for ``rat_kp_dvi.analysis``; no analysis logic lives here.
+"""
+
 from __future__ import annotations
 
 import json

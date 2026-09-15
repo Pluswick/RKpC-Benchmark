@@ -21,6 +21,7 @@ from rat_kp_core.physiology import CONTEXT_MODES
 
 
 def _load(which: str) -> pd.DataFrame:
+    """Load one or all job manifests, tagging each row with its manifest."""
     frames = []
     paths = {
         "primary": PRIMARY_JOB_MANIFEST_PATH,
@@ -36,6 +37,7 @@ def _load(which: str) -> pd.DataFrame:
 
 
 def _complete(row: pd.Series) -> bool:
+    """Report whether a job already has a completion marker."""
     path = (
         EXPERIMENT_RESULT_DIR
         / str(row["analysis_set"])
@@ -51,6 +53,12 @@ def _complete(row: pd.Series) -> bool:
 
 
 def main() -> None:
+    """Run every pending job sequentially, skipping those already complete.
+
+    Each job runs in its own subprocess so a crash cannot corrupt the rest of
+    the run, and a rerun resumes from the completion markers rather than
+    retraining finished jobs.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--analysis-set",

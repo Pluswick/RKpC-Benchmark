@@ -11,8 +11,20 @@ import pandas as pd
 BOOTSTRAP_SEED = 20260803
 BOOTSTRAP_REPLICATES = 10_000
 
+# Exhaustive sign-flip enumeration costs 2**n. The real families are ten paired
+# split seeds or eleven held-out tissues, so this cap cannot be reached by a
+# legitimate run; it turns an accidental misuse into an error rather than an
+# apparent hang.
+MAX_SIGN_FLIP_DIFFERENCES = 20
+
 
 def percentile_seed_ci(deltas, replicates: int = BOOTSTRAP_REPLICATES):
+    """Percentile bootstrap interval for the mean of ten paired seed differences.
+
+    The length is asserted: an observed-tissue contrast is defined over the ten
+    frozen split seeds, so a shorter vector means runs are missing rather than
+    that a smaller interval should be reported.
+    """
     values = np.asarray(deltas, dtype=float)
     if values.ndim != 1 or len(values) != 10 or not np.isfinite(values).all():
         raise ValueError("Part 1 requires ten finite paired split-seed differences")
@@ -22,9 +34,22 @@ def percentile_seed_ci(deltas, replicates: int = BOOTSTRAP_REPLICATES):
 
 
 def exact_sign_flip_pvalue(deltas) -> float:
+    """Two-sided exact sign-flip test on paired differences.
+
+    Enumerates all 2**n sign assignments rather than sampling them, so the
+    p-value is exact and identical on every run. It is valid because the null
+    hypothesis is symmetry of the paired differences about zero, which needs no
+    distributional assumption. Exhaustive enumeration is only tractable for the
+    small n used here (10 split seeds, or 11 held-out tissues).
+    """
     values = np.asarray(deltas, dtype=float)
     if values.ndim != 1 or not len(values) or not np.isfinite(values).all():
         raise ValueError("Sign-flip input must be one-dimensional and finite")
+    if len(values) > MAX_SIGN_FLIP_DIFFERENCES:
+        raise ValueError(
+            f"Exact sign-flip enumeration is capped at {MAX_SIGN_FLIP_DIFFERENCES} "
+            f"paired differences; received {len(values)}"
+        )
     observed = abs(values.mean())
     null = [
         abs(np.mean(values * np.asarray(signs, dtype=float)))
@@ -34,6 +59,11 @@ def exact_sign_flip_pvalue(deltas) -> float:
 
 
 def benjamini_hochberg(pvalues) -> np.ndarray:
+    """Benjamini-Hochberg adjusted p-values, returned in the input order.
+
+    The running minimum over the reversed ranking enforces monotonicity, so an
+    adjusted value can never fall below one from a smaller raw p-value.
+    """
     values = np.asarray(pvalues, dtype=float)
     order = np.argsort(values)
     ranked = values[order]
@@ -46,6 +76,12 @@ def benjamini_hochberg(pvalues) -> np.ndarray:
 
 
 def tissue_macro_rmse(predictions: pd.DataFrame) -> float:
+    """RMSE averaged over tissues with equal weight per tissue.
+
+    The dataset is unevenly sampled across tissues, so a pooled RMSE is
+    dominated by the best-represented tissues. Weighting tissues equally
+    answers the deployment question of how well a model does per tissue.
+    """
     required = {"Tissue", "y_true", "y_pred"}
     if required - set(predictions.columns):
         raise ValueError("Missing tissue-macro metric columns")

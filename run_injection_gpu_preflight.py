@@ -18,6 +18,7 @@ CASES = (
 
 
 def main() -> None:
+    """Run the reduced GPU smoke jobs for the injection study."""
     plan = build_plan()
     outputs = []
     for model, condition in CASES:

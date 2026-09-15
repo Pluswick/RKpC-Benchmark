@@ -1,4 +1,8 @@
-"""Analyze the complete injection study using only prespecified paired contrasts."""
+"""Analyze the complete injection study using only prespecified paired contrasts.
+
+"Injection" is this code base's name for what the manuscript calls tissue
+context and fusion position; see docs/terminology.md.
+"""
 
 from __future__ import annotations
 
@@ -44,6 +48,7 @@ LOTO_CONTRASTS = {
 
 
 def _prediction_path(row) -> Path:
+    """Locate one job's predictions, in this study's tree or the reused core one."""
     if row.execution_mode == "legacy_reuse":
         return STUDY_ROOT / row.legacy_result_path / "predictions.csv"
     return (
@@ -52,6 +57,13 @@ def _prediction_path(row) -> Path:
 
 
 def load_complete_predictions(plan: pd.DataFrame) -> pd.DataFrame:
+    """Load every planned job's predictions, reattaching its plan metadata.
+
+    Jobs marked ``legacy_reuse`` are read from the core (v2) results tree
+    instead of this study's, because those runs were reused rather than
+    retrained; see ``docs/terminology.md``. A missing, reshaped, or non-finite
+    prediction file aborts the whole analysis rather than reducing it.
+    """
     frames = []
     for row in plan.itertuples(index=False):
         path = _prediction_path(row)
@@ -75,6 +87,14 @@ def load_complete_predictions(plan: pd.DataFrame) -> pd.DataFrame:
 
 
 def job_metrics(predictions: pd.DataFrame) -> pd.DataFrame:
+    """Compute per-job test metrics, one row per job.
+
+    Alongside the pooled metrics this records a tissue-macro RMSE, which
+    averages per-tissue RMSE with equal weight per tissue. The two answer
+    different questions on this dataset, whose tissues are unevenly sampled:
+    the pooled value is dominated by well-represented tissues, the macro value
+    is not.
+    """
     grouping = [
         "job_id", "stage", "analysis_set", "model", "condition", "split_type",
         "split_seed", "heldout_tissue", "training_seed",
@@ -91,6 +111,21 @@ def job_metrics(predictions: pd.DataFrame) -> pd.DataFrame:
 
 
 def _part1_family(metrics_frame: pd.DataFrame, contrasts: dict, family: str):
+    """Estimate one prespecified family of observed-tissue paired contrasts.
+
+    Differences are formed within a split seed and signed
+    ``comparison - reference``, so a negative value favours the comparison
+    condition. Intervals bootstrap the 10 paired seed differences and the test
+    is an exact sign-flip over them.
+
+    Benjamini-Hochberg correction is applied **only** across the primary
+    dataset's comparisons in this family. The sensitivity datasets are
+    exploratory and are excluded so they cannot inflate the family size, and
+    the expected primary family size is asserted so a plan change cannot
+    silently alter what was corrected.
+
+    Returns the seed-level differences and the per-contrast summary.
+    """
     part1 = metrics_frame[metrics_frame.stage == "part1"]
     deltas = []
     for (analysis_set, model, split_type), frame in part1.groupby(
@@ -139,6 +174,20 @@ def _part1_family(metrics_frame: pd.DataFrame, contrasts: dict, family: str):
 
 
 def loto_analysis(predictions: pd.DataFrame):
+    """Estimate the leave-one-tissue-out contrasts on seed-averaged predictions.
+
+    Predictions are first averaged over the five training seeds. RMSE is then
+    computed per held-out tissue and the model-level effect is the unweighted
+    mean over tissues, so each of the 11 held-out tissues counts once. Intervals
+    resample tissues and then parent groups within tissue, which keeps the
+    resampling unit at the level leakage control operates on.
+
+    These contrasts are corrected as a secondary family, separate from the
+    observed-tissue primary families.
+
+    Returns seed-averaged predictions, per-tissue effects, and model-level
+    inference.
+    """
     loto = predictions[predictions.stage == "loto"].copy()
     grouping = [
         "model", "condition", "Tissue", "parent_group_id", "identity_unit_id",
@@ -191,6 +240,11 @@ def loto_analysis(predictions: pd.DataFrame):
 
 
 def _descriptor_table(predictions: pd.DataFrame) -> pd.DataFrame:
+    """Bin unique SMILES into low/middle/high strata per physicochemical descriptor.
+
+    Cut points come from the frozen configuration rather than from the observed
+    distribution, so strata do not shift with the subset being analyzed.
+    """
     config = load_config()["property_stratification"]
     unique = predictions[["SMILES"]].drop_duplicates().copy()
     functions = {
@@ -210,6 +264,11 @@ def _descriptor_table(predictions: pd.DataFrame) -> pd.DataFrame:
 
 
 def property_stratification(predictions: pd.DataFrame) -> pd.DataFrame:
+    """Recompute observed-tissue metrics within each descriptor stratum.
+
+    Descriptive only: no interval or test is attached, and the strata are not
+    part of any multiplicity family.
+    """
     primary = predictions[(predictions.analysis_set == "primary") & (predictions.stage == "part1")].copy()
     primary = primary.merge(_descriptor_table(primary), on="SMILES", validate="many_to_one")
     rows = []
@@ -232,6 +291,11 @@ def property_stratification(predictions: pd.DataFrame) -> pd.DataFrame:
 
 
 def main() -> None:
+    """Run the prespecified analysis and write the result tables and manifest.
+
+    Refuses to start unless the frozen configuration still matches its recorded
+    checksum, so an edited protocol cannot produce tables labelled as frozen.
+    """
     load_config(require_frozen=True)
     plan = build_plan()
     predictions = load_complete_predictions(plan)

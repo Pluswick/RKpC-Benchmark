@@ -21,6 +21,11 @@ from .paths import (
 
 
 def _molecules(smiles: pd.Series) -> list[Chem.Mol]:
+    """Parse SMILES to RDKit molecules, raising if any fail.
+
+    Invalid structures are removed during data preparation, so one reaching the
+    featurizer means the dataset and the cache have diverged.
+    """
     molecules = [Chem.MolFromSmiles(str(value)) for value in smiles]
     if any(molecule is None for molecule in molecules):
         raise ValueError("Invalid SMILES reached independent featurizer")
@@ -28,6 +33,7 @@ def _molecules(smiles: pd.Series) -> list[Chem.Mol]:
 
 
 def _morgan(molecules: list[Chem.Mol]) -> np.ndarray:
+    """Morgan fingerprints at the frozen radius, size, and chirality setting."""
     generator = rdFingerprintGenerator.GetMorganGenerator(
         radius=2, fpSize=2048, includeChirality=True
     )
@@ -38,6 +44,12 @@ def _morgan(molecules: list[Chem.Mol]) -> np.ndarray:
 
 
 def _descriptors(molecules: list[Chem.Mol]) -> np.ndarray:
+    """Full RDKit 2D descriptor block, with failures recorded as NaN.
+
+    A few descriptors raise or return non-finite values on particular
+    structures. Those entries become NaN here and are imputed from training
+    medians at fit time, so one awkward molecule cannot drop a whole column.
+    """
     functions = [function for _, function in Descriptors.descList]
     output = np.empty((len(molecules), len(functions)), dtype=np.float64)
     for row, molecule in enumerate(molecules):
@@ -81,6 +93,12 @@ def build_tabular_feature_cache(force: bool = False) -> dict:
 
 
 def _cached_features(frame: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+    """Look up cached molecular features for a frame's SMILES.
+
+    The cache is keyed by the dataset checksum, and a SMILES absent from it
+    raises rather than being featurized on the fly, which would silently mix
+    features built from two dataset revisions.
+    """
     metadata = build_tabular_feature_cache()
     if metadata["long_data_sha256"] != sha256_file(LONG_DATA_PATH):
         raise ValueError("Tabular feature cache data checksum mismatch")
@@ -95,6 +113,20 @@ def _cached_features(frame: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
 
 @dataclass
 class TabularPreprocessor:
+    """Assemble tabular model inputs: fingerprints, descriptors, and context.
+
+    Every statistic is learned on the training partition only -- descriptor
+    medians for imputation, the float32-safe descriptor mask, the clipping
+    range, and for LinearSVR the standardization and constant-bit mask. Test
+    rows are then transformed with those fitted values, so no held-out
+    information reaches preprocessing.
+
+    Descriptors are clipped to the training range because RDKit descriptors
+    are unbounded and a single extreme test molecule would otherwise dominate
+    a distance-based fit. Columns that overflow float32 on the training rows
+    are dropped entirely rather than silently becoming infinities.
+    """
+
     model_key: str
     context: ContextEncoder
     descriptor_medians_: np.ndarray | None = field(default=None, init=False)
@@ -106,6 +138,7 @@ class TabularPreprocessor:
     fitted_: bool = field(default=False, init=False)
 
     def fit(self, train: pd.DataFrame) -> "TabularPreprocessor":
+        """Learn imputation, masking, clipping, and scaling from training rows only."""
         fingerprints, descriptors = _cached_features(train)
         with np.errstate(all="ignore"):
             self.descriptor_medians_ = np.nanmedian(descriptors, axis=0)
@@ -129,6 +162,11 @@ class TabularPreprocessor:
         return self
 
     def transform(self, frame: pd.DataFrame) -> np.ndarray:
+        """Apply the fitted preprocessing and concatenate the context block.
+
+        The result is checked for finiteness: a non-finite feature would propagate
+        into the fitted model without any other symptom.
+        """
         if not self.fitted_ or self.descriptor_medians_ is None or self.descriptor_mask_ is None:
             raise RuntimeError("Tabular preprocessor is not fit")
         fingerprints, descriptors = _cached_features(frame)
@@ -144,4 +182,5 @@ class TabularPreprocessor:
         return result
 
     def fit_transform(self, train: pd.DataFrame) -> np.ndarray:
+        """Fit on the training rows and transform them in one call."""
         return self.fit(train).transform(train)

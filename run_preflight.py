@@ -10,18 +10,24 @@ import tempfile
 import numpy as np
 import pandas as pd
 
-from rat_kp_core.paths import PRIMARY_JOB_MANIFEST_PATH, STUDY_ROOT
+from rat_kp_core.paths import PRIMARY_JOB_MANIFEST_PATH, SPLIT_FILE_STEM, STUDY_ROOT
 from rat_kp_core.training import PREDICTION_COLUMNS, execute_job
 
 
 def main() -> None:
+    """Run the 15 reduced integration jobs and record that they passed.
+
+    Predictions and metrics are written to a temporary directory and discarded;
+    only the schema and completion checks are kept, so a preflight can never
+    leak performance numbers before the study is frozen.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--device", choices=["cpu", "gpu"], default="cpu")
     args = parser.parse_args()
     jobs = pd.read_csv(PRIMARY_JOB_MANIFEST_PATH, encoding="utf-8-sig", keep_default_na=False)
     selected = jobs[
         (jobs["stage"] == "part1")
-        & (jobs["split_type"] == "random")
+        & (jobs["split_type"] == SPLIT_FILE_STEM["parent_group"])
         & (jobs["split_seed"] == 0)
     ]
     if len(selected) != 15:

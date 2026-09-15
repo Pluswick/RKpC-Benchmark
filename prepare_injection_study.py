@@ -1,4 +1,8 @@
-"""Write and validate the injection-study manifests without running full experiments."""
+"""Write and validate the injection-study manifests without running full experiments.
+
+"Injection" is this code base's name for what the manuscript calls tissue
+context and fusion position; see docs/terminology.md.
+"""
 
 from __future__ import annotations
 
@@ -42,6 +46,13 @@ from rat_kp_fusion.training import _pyg_graph
 
 
 def _reuse_audit(reuse: pd.DataFrame) -> dict:
+    """Verify every reused core-stage run before it is admitted to the plan.
+
+    Each reused job must have completed under the recorded core configuration
+    checksum, with a matching prediction count and finite values. Reused runs are
+    one arm of paired contrasts, so admitting a stale or partial one would
+    corrupt the comparison rather than merely lose a job.
+    """
     config = load_config(require_frozen=True)
     expected_legacy_hash = config["legacy_fixed_config_sha256"]
     prediction_rows = 0
@@ -65,6 +76,7 @@ def _reuse_audit(reuse: pd.DataFrame) -> dict:
 
 
 def _split_audit(plan: pd.DataFrame) -> dict:
+    """Re-verify leakage and held-out-tissue boundaries for every planned split."""
     unique = plan[["split_path", "stage", "heldout_tissue"]].drop_duplicates()
     leakage = 0
     for row in unique.itertuples(index=False):
@@ -82,6 +94,7 @@ def _split_audit(plan: pd.DataFrame) -> dict:
 
 
 def _parameter_counts() -> list[dict]:
+    """Record trainable parameter counts for every architecture and condition."""
     rows = []
     conditions = {
         "structure_only": (0, "none"),
@@ -110,6 +123,7 @@ def _parameter_counts() -> list[dict]:
 
 
 def _smoke_audit(config_hash: str) -> dict:
+    """Verify the CPU smoke runs covered every model and condition."""
     runs = list(SMOKE_RESULT_DIR.rglob("run.json"))
     if len(runs) != 14:
         raise RuntimeError(f"Expected 14 smoke runs, found {len(runs)}")
@@ -133,6 +147,7 @@ def _smoke_audit(config_hash: str) -> dict:
 
 
 def _gpu_smoke_audit(config_hash: str) -> dict:
+    """Verify the GPU smoke runs covered every model."""
     runs = list(GPU_SMOKE_RESULT_DIR.rglob("run.json"))
     if len(runs) != 4:
         raise RuntimeError(f"Expected 4 GPU smoke runs, found {len(runs)}")
@@ -152,6 +167,11 @@ def _gpu_smoke_audit(config_hash: str) -> dict:
 
 
 def main() -> None:
+    """Write the job plan and the fail-closed pre-experiment validation record.
+
+    Refuses to run once any full experiment exists, so the recorded validation
+    always describes the state before execution.
+    """
     if CONFIG_SHA256 is None:
         raise RuntimeError("Freeze CONFIG_SHA256 before final preflight")
     config = load_config(require_frozen=True)
@@ -163,6 +183,11 @@ def main() -> None:
     config_hash = sha256_file(CONFIG_PATH)
     smoke_report = _smoke_audit(config_hash)
     gpu_smoke_report = _gpu_smoke_audit(config_hash)
+    # Hashes of every source file that defines the frozen protocol. The original
+    # run additionally hashed an internal contract test and a Korean-language
+    # protocol document; neither is distributed publicly, so their hashes exist
+    # only in the archived run manifest and are replaced here by the public
+    # equivalents.
     source_files = sorted((STUDY_ROOT / "rat_kp_fusion").glob("*.py"))
     source_files += [
         STUDY_ROOT / "prepare_injection_study.py",
@@ -170,8 +195,8 @@ def main() -> None:
         STUDY_ROOT / "run_injection_gpu_preflight.py",
         STUDY_ROOT / "run_injection_experiments.py",
         STUDY_ROOT / "analyze_injection_results.py",
-        STUDY_ROOT / "tests" / "test_injection_contract.py",
-        STUDY_ROOT / "manuscript" / "INJECTION_STUDY_PROTOCOL_V1_KO.md",
+        STUDY_ROOT / "tests" / "test_public_smoke.py",
+        STUDY_ROOT / "docs" / "reproducibility_spec.md",
     ]
     report = {
         "status": "passed",

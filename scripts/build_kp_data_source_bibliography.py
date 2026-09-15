@@ -205,6 +205,15 @@ def read_first_sheet(path: Path) -> list[list[object]]:
 
 
 def build(raw_csv: Path, reference_workbook: Path) -> pd.DataFrame:
+    """Re-derive per-source aggregate contribution counts from the private inputs.
+
+    Row alignment between Kp_Data and the source workbook is verified first, then
+    the frozen curation and aggregation chain is re-applied so the counts reflect
+    exactly the records that entered the primary dataset.
+
+    Because several source rows can aggregate into one compound-tissue record,
+    per-source counts are not expected to sum to the dataset size.
+    """
     raw = prepare_data.read_csv(raw_csv)
     workbook_rows = read_first_sheet(reference_workbook)
     header = workbook_rows[0]
@@ -224,6 +233,7 @@ def build(raw_csv: Path, reference_workbook: Path) -> pd.DataFrame:
         raise RuntimeError(f"Expected 1,270 primary records, found {len(primary)}")
 
     def normalize_key(value: object) -> str:
+        """Normalize a reference label so the same source matches across spellings."""
         text = str(value).replace("\u2013", "-").replace("\u2014", "-").replace("\u03b2", "beta")
         return re.sub(r"\s+", " ", text).strip().lower()
 
@@ -278,6 +288,11 @@ def build(raw_csv: Path, reference_workbook: Path) -> pd.DataFrame:
 
 
 def write_outputs(frame: pd.DataFrame, output_dir: Path) -> None:
+    """Write the aggregate bibliography as CSV and Markdown.
+
+    Bibliographic facts and counts only: no compound names, structures, tissue
+    values, or record-level source links are ever written.
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     csv_path = output_dir / "kp_data_source_bibliography.csv"
     frame.to_csv(csv_path, index=False, encoding="utf-8", quoting=csv.QUOTE_MINIMAL)
@@ -319,6 +334,7 @@ def write_outputs(frame: pd.DataFrame, output_dir: Path) -> None:
 
 
 def main() -> None:
+    """Regenerate the aggregate source-provenance inventory from authorised local inputs."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--raw-csv", type=Path, required=True)
     parser.add_argument("--reference-workbook", type=Path, required=True)

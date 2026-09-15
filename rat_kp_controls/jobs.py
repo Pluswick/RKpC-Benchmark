@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 
 from rat_kp_core.data import read_csv
-from rat_kp_core.paths import LONG_DATA_PATH, SPLIT_DIR, STUDY_ROOT
+from rat_kp_core.paths import LONG_DATA_PATH, SPLIT_DIR, SPLIT_FILE_STEM, STUDY_ROOT
 
 from .config import load_config
 from .paths import MANIFEST_DIR, PLAN_PATH
@@ -15,6 +15,7 @@ MODELS = ("gcn", "gine", "d_mpnn", "attentive_fp")
 
 
 def _relative(path) -> str:
+    """Render a path relative to the repository root for storage in a manifest."""
     return str(path.relative_to(STUDY_ROOT))
 
 
@@ -33,6 +34,7 @@ def _base_row(
     training_seed: int,
     split_path,
 ) -> dict:
+    """Build one planned job row with its identifier and resolved settings."""
     job_id = (
         f"addctx__{analysis}__{split_type}__split{split_seed}__"
         f"{heldout_tissue or 'none'}__{model}__{condition}__train{training_seed}"
@@ -59,9 +61,14 @@ def _base_row(
 
 
 def _additive_rows() -> list[dict]:
+    """Enumerate the additive tissue-intercept jobs over both split schemes.
+
+    Physiology scaling is not applicable because this control encodes tissue as
+    a one-hot identity feeding a scalar intercept, never as descriptors.
+    """
     rows = []
     for split_type in ("parent_group", "scaffold"):
-        internal = "random" if split_type == "parent_group" else "scaffold"
+        internal = SPLIT_FILE_STEM[split_type]
         for split_seed in range(10):
             split_path = SPLIT_DIR / f"{internal}_seed{split_seed}.csv"
             for model in MODELS:
@@ -83,6 +90,13 @@ def _additive_rows() -> list[dict]:
 
 
 def _raw_loto_rows() -> list[dict]:
+    """Enumerate the LOTO jobs that use unit-harmonized, unstandardized descriptors.
+
+    The main analysis standardizes physiology descriptors on the training
+    tissues, which can place a held-out tissue far outside the fitted range.
+    Repeating LOTO on raw fractions tests whether a conclusion depends on that
+    preprocessing choice.
+    """
     tissues = sorted(read_csv(LONG_DATA_PATH)["Tissue"].astype(str).unique())
     rows = []
     for tissue in tissues:
@@ -108,6 +122,7 @@ def _raw_loto_rows() -> list[dict]:
 
 
 def build_plan() -> pd.DataFrame:
+    """Build the fixed additional-analysis plan, asserting its size and model order."""
     config = load_config()
     if tuple(config["models"]) != MODELS:
         raise RuntimeError("Additional-analysis model order mismatch")
@@ -125,6 +140,7 @@ def build_plan() -> pd.DataFrame:
 
 
 def write_plan() -> pd.DataFrame:
+    """Write the additional-analysis plan to the manifest directory."""
     MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
     plan = build_plan()
     plan.to_csv(PLAN_PATH, index=False, encoding="utf-8-sig")

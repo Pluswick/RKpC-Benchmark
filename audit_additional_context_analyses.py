@@ -20,6 +20,7 @@ from rat_kp_controls.paths import (
 
 
 def main() -> None:
+    """Fail-closed audit of the additional-context outputs before they are reported."""
     lock_path = MANIFEST_DIR / "execution_lock.json"
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
     source_drift = []

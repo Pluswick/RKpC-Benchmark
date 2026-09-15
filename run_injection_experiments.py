@@ -19,6 +19,7 @@ from rat_kp_fusion.training import execute_new_job
 
 
 def main() -> None:
+    """Run every pending injection-study job, resuming from completion markers."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--device", choices=["auto", "cpu", "gpu"], default="auto")
     parser.add_argument("--confirm-full-run", action="store_true")

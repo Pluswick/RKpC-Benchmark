@@ -1,3 +1,10 @@
+"""Load and integrity-check the locked additive-tissue-intercept config.
+
+Mirrors ``rat_kp_fusion.config``: passing ``require_locked`` refuses to run
+unless the file still hashes to the pinned value recorded when the protocol
+was locked, before any full job of these analyses was executed.
+"""
+
 from __future__ import annotations
 
 import json
@@ -12,6 +19,10 @@ CONFIG_SHA256: str | None = "3f9797fefb7ffd98c284f11f45ccf931ec75b26c80995be8779
 
 
 def load_config(*, require_locked: bool = False) -> dict:
+    """Load the frozen additional-context configuration and verify its contract.
+
+    See the module docstring for what the integrity check guarantees.
+    """
     config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     if (
         config.get("schema_version") != "1.0"

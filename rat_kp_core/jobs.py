@@ -11,14 +11,17 @@ from .data import read_csv, sha256_file
 from .paths import (
     AD_SENSITIVITY_DATA_PATH,
     AD_SENSITIVITY_JOB_MANIFEST_PATH,
+    AD_SENSITIVITY_SPLIT_DIR,
     CONDITION_SENSITIVITY_DATA_PATH,
     CONDITION_SENSITIVITY_JOB_MANIFEST_PATH,
+    CONDITION_SENSITIVITY_SPLIT_DIR,
     CONFIG_PATH,
     LONG_DATA_PATH,
     LOTO_SPLIT_DIR,
     MANIFEST_DIR,
     PRIMARY_JOB_MANIFEST_PATH,
     SPLIT_DIR,
+    SPLIT_FILE_STEMS,
     STUDY_ROOT,
 )
 from .physiology import CONTEXT_MODES
@@ -43,21 +46,27 @@ DATASETS = {
     },
     "ad_excluded": {
         "path": AD_SENSITIVITY_DATA_PATH,
-        "split_dir": STUDY_ROOT / "data" / "splits_sensitivity" / "ad_excluded",
+        "split_dir": AD_SENSITIVITY_SPLIT_DIR,
         "analysis_set": "ad_excluded",
     },
     "condition_specific": {
         "path": CONDITION_SENSITIVITY_DATA_PATH,
-        "split_dir": STUDY_ROOT / "data" / "splits_sensitivity" / "condition_specific",
+        "split_dir": CONDITION_SENSITIVITY_SPLIT_DIR,
         "analysis_set": "condition_specific",
     },
 }
 
 
 def _part1_jobs(dataset_key: str, contexts: tuple[str, ...]) -> list[dict]:
+    """Enumerate the observed-tissue jobs for one dataset: splits x seeds x models x contexts.
+
+    The training seed follows the split seed so each repeat is a distinct fit;
+    LinearSVR is deterministic under the frozen settings and is pinned to one
+    seed instead of repeating an identical fit ten times.
+    """
     spec = DATASETS[dataset_key]
     rows: list[dict] = []
-    for split_type in ("random", "scaffold"):
+    for split_type in SPLIT_FILE_STEMS:
         for split_seed in range(10):
             split_path = spec["split_dir"] / f"{split_type}_seed{split_seed}.csv"
             for model in MODELS:
@@ -86,6 +95,11 @@ def _part1_jobs(dataset_key: str, contexts: tuple[str, ...]) -> list[dict]:
 
 
 def _loto_jobs(dataset_key: str, contexts: tuple[str, ...]) -> list[dict]:
+    """Enumerate the leave-one-tissue-out jobs: one held-out tissue at a time.
+
+    There is no split seed here because the partition is determined by which
+    tissue is held out; repetition comes from the training seeds instead.
+    """
     spec = DATASETS[dataset_key]
     rows: list[dict] = []
     tissues = sorted(read_csv(spec["path"])["Tissue"].unique())
@@ -114,6 +128,12 @@ def _loto_jobs(dataset_key: str, contexts: tuple[str, ...]) -> list[dict]:
 
 
 def build_job_manifests() -> dict[str, pd.DataFrame]:
+    """Build the frozen job manifests for the primary and both sensitivity datasets.
+
+    Job counts and identifier uniqueness are asserted, and every referenced
+    dataset and split file must already exist, so a manifest can never name a
+    job that could not be run.
+    """
     manifests = {
         "primary": pd.DataFrame(
             _part1_jobs("primary", CONTEXT_MODES)
@@ -142,6 +162,7 @@ def build_job_manifests() -> dict[str, pd.DataFrame]:
 
 
 def write_job_manifests() -> dict:
+    """Write the job manifests to disk and return a report with their checksums."""
     manifests = build_job_manifests()
     paths = {
         "primary": PRIMARY_JOB_MANIFEST_PATH,

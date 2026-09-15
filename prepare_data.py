@@ -11,7 +11,6 @@ import hashlib
 import json
 import math
 import re
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -22,15 +21,21 @@ from rdkit.Chem.Scaffolds import MurckoScaffold
 
 from rat_kp_core.data import TISSUES, _parse_kp, read_csv, sha256_file
 from rat_kp_core.features import build_tabular_feature_cache
+# The split locations are imported rather than restated so that this writer and
+# every downstream reader (validate_setup, the job planners) cannot drift apart.
+from rat_kp_core.paths import (
+    INPUT_DIR as PROCESSED_DIR,
+    LOTO_SPLIT_DIR as LOTO_DIR,
+    RAW_DATA_PATH as RAW_PATH,
+    SENSITIVITY_SPLIT_ROOT,
+    SPLIT_DIR,
+    SPLIT_FILE_STEM,
+    SPLIT_FILE_STEMS,
+    STUDY_ROOT as ROOT,
+)
 
 
-ROOT = Path(__file__).resolve().parent
-RAW_PATH = ROOT / "data" / "inputs" / "source_data_not_distributed.csv"
-PROCESSED_DIR = ROOT / "data" / "inputs"
 AUDIT_DIR = ROOT / "data" / "generated_audit"
-SPLIT_DIR = ROOT / "data" / "inputs" / "splits"
-LOTO_DIR = SPLIT_DIR / "loto"
-SENSITIVITY_SPLIT_ROOT = ROOT / "data" / "inputs" / "splits_sensitivity"
 
 AD_MW_THRESHOLD = 800.0
 FLUNITRAZEPAM_SMILES = (
@@ -52,6 +57,15 @@ CONDITION_PATTERNS = (
 
 
 def normalize_label(label: str) -> str:
+    """Map known compound-name variants onto one canonical label.
+
+    The source literature uses several names for the same substance (British
+    versus American spellings, enantiomer notations, salt-form wording). These
+    are enumerated explicitly rather than matched by similarity, so the mapping
+    is auditable and can never merge two genuinely distinct compounds.
+
+    Enantiomers are kept distinct: R- and S- forms get separate labels.
+    """
     key = label.strip().lower()
     direct = {
         "phenobarbitone": "phenobarbital",
@@ -78,6 +92,12 @@ def normalize_label(label: str) -> str:
 
 
 def parse_condition(label: str) -> tuple[str, float | None, str]:
+    """Extract an experimental dose or concentration embedded in a compound label.
+
+    Some source rows encode the experimental condition in the name rather than
+    a column. Recovering it lets the condition-specific sensitivity dataset keep
+    those measurements separate instead of aggregating across conditions.
+    """
     for pattern, kind, unit in CONDITION_PATTERNS:
         match = pattern.search(label)
         if match:
@@ -86,6 +106,20 @@ def parse_condition(label: str) -> tuple[str, float | None, str]:
 
 
 def molecule_fields(smiles: str) -> dict[str, object] | None:
+    """Derive standardized structure identifiers, or None if the SMILES is invalid.
+
+    The largest fragment is taken as the parent, which strips salts and
+    counter-ions while keeping the species the Kp measurement refers to. Ties
+    are broken deterministically by heavy-atom count, then atom count, then
+    canonical SMILES, so the choice never depends on input ordering.
+
+    The returned keys serve different purposes and are deliberately not
+    interchangeable: ``model_smiles`` retains formal charge and stereochemistry
+    and is what the models consume, while ``parent_connectivity_key`` and
+    ``murcko_scaffold`` are charge-neutralized and stereochemistry-free and are
+    used only for grouping. Grouping must be coarser than the model input, or a
+    split could place two forms of one compound on opposite sides.
+    """
     mol = Chem.MolFromSmiles(str(smiles))
     if mol is None:
         return None
@@ -121,10 +155,26 @@ def molecule_fields(smiles: str) -> dict[str, object] | None:
 
 
 def stable_id(prefix: str, value: str, length: int = 12) -> str:
+    """Derive a deterministic identifier from a value by hashing it.
+
+    Content-derived rather than positional, so an identifier stays attached to
+    the same entity if the source row order changes.
+    """
     return f"{prefix}_{hashlib.sha256(value.encode('utf-8')).hexdigest()[:length]}"
 
 
 def classify_rat_row(row: pd.Series, parsed: dict[str, object] | None) -> tuple[str, str, str]:
+    """Decide whether one rat source row is retained, corrected, or quarantined.
+
+    Each documented curation decision returns a status, a human-readable reason,
+    and where possible a PubChem URL for the structure it was checked against,
+    so every exclusion in the audit trail can be traced to a specific finding
+    rather than to an unexplained filter.
+
+    Rows with structures that cannot be resolved are quarantined rather than
+    guessed at, and the one corrected record is recorded as corrected rather
+    than silently rewritten.
+    """
     label = str(row["Drug"]).strip().lower()
     formula = "" if parsed is None else str(parsed["formula"])
     source_smiles = str(row["SMILES"])
@@ -187,6 +237,17 @@ def classify_rat_row(row: pd.Series, parsed: dict[str, object] | None) -> tuple[
 
 
 def build_resolution_manifest(raw: pd.DataFrame) -> pd.DataFrame:
+    """Build the row-level audit trail from the raw source table.
+
+    Every source row is assigned a stable identifier and keeps its original CSV
+    line number, so any downstream record can be traced back to the workbook
+    cell it came from. Exact duplicates are detected across all source fields
+    and the later copies are marked as duplicates of the first rather than
+    dropped, so the count of removed rows stays auditable.
+
+    Nothing is deleted here: the manifest records a status for every row and
+    the primary dataset is a filtered view of it.
+    """
     raw = raw.copy()
     raw.insert(0, "source_row_id", [f"RAW{i:04d}" for i in range(len(raw))])
     raw.insert(1, "source_csv_row", np.arange(len(raw), dtype=int) + 2)
@@ -263,6 +324,17 @@ def build_resolution_manifest(raw: pd.DataFrame) -> pd.DataFrame:
 
 
 def add_identity_ids(manifest: pd.DataFrame) -> pd.DataFrame:
+    """Assign parent-group and identity-unit identifiers to the retained rows.
+
+    A parent group collects everything sharing a charge-neutralized
+    connectivity key and is the unit that splits never divide, so salts and
+    stereoisomers of one compound cannot straddle train and test. An identity
+    unit is finer -- normalized name plus resolved SMILES -- and is the unit that
+    replicate measurements are aggregated within.
+
+    Both are numbered over a sorted key list, so identifiers are stable across
+    reruns rather than dependent on row order.
+    """
     result = manifest.copy()
     included = result["included_in_primary"].astype(bool)
     parent_keys = sorted(result.loc[included, "parent_connectivity_key"].astype(str).unique())
@@ -283,6 +355,12 @@ def add_identity_ids(manifest: pd.DataFrame) -> pd.DataFrame:
 
 
 def condition_specific_long(manifest: pd.DataFrame) -> pd.DataFrame:
+    """Reshape the retained rows to one row per record and tissue, keeping conditions apart.
+
+    This is the sensitivity dataset that retains individual positive source
+    measurements instead of aggregating them, so the effect of the aggregation
+    choice can be examined separately.
+    """
     retained = manifest[manifest["included_in_primary"].astype(bool)].copy()
     id_columns = [
         "source_row_id",
@@ -338,7 +416,15 @@ def condition_specific_long(manifest: pd.DataFrame) -> pd.DataFrame:
 
 
 def aggregate_primary(condition_long: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate replicate measurements into the primary one-row-per-record dataset.
+
+    Replicates within an identity unit and tissue are combined by the median of
+    the raw Kp values, which resists the outliers common in heterogeneous
+    literature data. The observed minimum, maximum, and count are retained
+    alongside, so the spread behind each aggregated value stays inspectable.
+    """
     def join(values: pd.Series) -> str:
+        """Join distinct non-empty values of a group into one sorted label."""
         return " | ".join(sorted({str(value) for value in values if pd.notna(value) and str(value) != ""}))
 
     grouped = (
@@ -399,6 +485,15 @@ def aggregate_primary(condition_long: pd.DataFrame) -> pd.DataFrame:
 
 
 def split_parent_groups(groups: list[str], seed: int, fractions: tuple[float, float, float]) -> dict[str, str]:
+    """Assign whole parent groups to train/validation/test partitions.
+
+    The unit of assignment is the parent group, never the record, so every
+    record of a compound lands in one partition. Groups are sorted before
+    shuffling so the result depends only on the seed, not on input order.
+
+    This is the scheme the manuscript calls the parent-group split; its files
+    carry the historical ``random`` stem (see ``rat_kp_core.paths``).
+    """
     values = np.array(sorted(set(groups)), dtype=object)
     np.random.default_rng(seed).shuffle(values)
     n_train = round(len(values) * fractions[0])
@@ -410,6 +505,13 @@ def split_parent_groups(groups: list[str], seed: int, fractions: tuple[float, fl
 
 
 def scaffold_parent_split(long_df: pd.DataFrame, seed: int) -> dict[str, str]:
+    """Assign parent groups to partitions by shared Murcko scaffold.
+
+    Scaffold groups are filled largest-first after shuffling, which places whole
+    chemotypes on one side of the split and makes the test set harder than a
+    group-random split. Each parent group is required to have exactly one
+    scaffold, so scaffold assignment can never split a parent group.
+    """
     parent = long_df[["parent_group_id", "murcko_scaffold"]].drop_duplicates()
     if parent.groupby("parent_group_id")["murcko_scaffold"].nunique().max() != 1:
         raise RuntimeError("A parent group has multiple Murcko scaffolds")
@@ -437,14 +539,24 @@ def scaffold_parent_split(long_df: pd.DataFrame, seed: int) -> dict[str, str]:
 
 
 def write_splits(long_df: pd.DataFrame) -> dict[str, str]:
+    """Write the primary parent-group, scaffold, and LOTO split files.
+
+    LOTO folds place every record of the held-out tissue in test and partition
+    the remaining tissues by parent group, with no test share to allocate.
+    Returns each file's SHA-256 for the pre-experiment freeze.
+    """
     SPLIT_DIR.mkdir(parents=True, exist_ok=True)
     LOTO_DIR.mkdir(parents=True, exist_ok=True)
     hashes: dict[str, str] = {}
     base_columns = ["row_index", "parent_group_id", "identity_unit_id", "SMILES", "Tissue"]
     for seed in range(10):
+        # Both schemes partition whole parent groups; see SPLIT_FILE_STEM for why
+        # the parent-group scheme is stored under the "random" filename stem.
         assignments = {
-            "random": split_parent_groups(long_df["parent_group_id"].tolist(), seed, (0.70, 0.15, 0.15)),
-            "scaffold": scaffold_parent_split(long_df, seed),
+            SPLIT_FILE_STEM["parent_group"]: split_parent_groups(
+                long_df["parent_group_id"].tolist(), seed, (0.70, 0.15, 0.15)
+            ),
+            SPLIT_FILE_STEM["scaffold"]: scaffold_parent_split(long_df, seed),
         }
         for split_type, lookup in assignments.items():
             table = long_df[base_columns].copy()
@@ -475,7 +587,7 @@ def write_derived_splits(dataset: pd.DataFrame, analysis_set: str) -> dict[str, 
     loto_root.mkdir(parents=True, exist_ok=True)
     base_columns = ["row_index", "parent_group_id", "identity_unit_id", "SMILES", "Tissue"]
     hashes: dict[str, str] = {}
-    for split_type in ("random", "scaffold"):
+    for split_type in SPLIT_FILE_STEMS:
         for seed in range(10):
             primary_split = read_csv(SPLIT_DIR / f"{split_type}_seed{seed}.csv")
             group_assignment = primary_split.groupby("parent_group_id")["split"].first().to_dict()
@@ -503,6 +615,11 @@ def write_derived_splits(dataset: pd.DataFrame, analysis_set: str) -> dict[str, 
 
 
 def audit_splits(long_df: pd.DataFrame) -> pd.DataFrame:
+    """Re-derive leakage and coverage statistics from the written split files.
+
+    Reads the files back from disk rather than inspecting the in-memory
+    assignments, so the audit covers what was actually written.
+    """
     rows: list[dict[str, object]] = []
     for path in sorted(SPLIT_DIR.glob("*.csv")):
         split = read_csv(path)
@@ -538,6 +655,11 @@ def audit_splits(long_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def main() -> None:
+    """Build every processed dataset, split file, and audit table from the raw source.
+
+    All output stays inside the repository's ignored data directories; nothing
+    produced here is distributed.
+    """
     RDLogger.DisableLog("rdApp.*")
     for directory in (PROCESSED_DIR, AUDIT_DIR, SPLIT_DIR, LOTO_DIR):
         directory.mkdir(parents=True, exist_ok=True)

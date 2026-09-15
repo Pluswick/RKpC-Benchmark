@@ -44,6 +44,12 @@ PREDICTION_COLUMNS = [
 
 
 def _contexts(job: pd.Series, frames: dict[str, pd.DataFrame]) -> dict[str, np.ndarray]:
+    """Encode context for every partition, fit on training rows only.
+
+    The additive control always uses a one-hot tissue identity, whatever the
+    job's physiology scaling says, because the intercept consumes an identity
+    rather than descriptors.
+    """
     if str(job["condition"]) == "additive_tissue_intercept":
         encoder = ContextEncoder("tissue_onehot", load_physiology()).fit(frames["train"])
         if len(encoder.fitted_tissues) != 11:
@@ -69,6 +75,7 @@ def _contexts(job: pd.Series, frames: dict[str, pd.DataFrame]) -> dict[str, np.n
 
 
 def _fit_additive_pyg(job, frames, contexts, device, smoke):
+    """Train a PyG additive control and predict the test partition."""
     graphs = _pyg_datasets(frames, contexts)
     loaders = _pyg_loaders(graphs, int(job["training_seed"]))
     first = graphs["train"][0]
@@ -91,6 +98,7 @@ def _fit_additive_pyg(job, frames, contexts, device, smoke):
 
 
 def _fit_additive_d_mpnn(job, frames, contexts, device, smoke):
+    """Train the D-MPNN additive control and predict the test partition."""
     datasets = {
         name: _chemprop_dataset(frame, contexts[name], "late")
         for name, frame in frames.items()
@@ -124,6 +132,7 @@ def _fit_additive_d_mpnn(job, frames, contexts, device, smoke):
 
 
 def _serializable(value):
+    """Convert a pandas or NumPy scalar into something JSON can hold."""
     if pd.isna(value):
         return ""
     return value.item() if hasattr(value, "item") else value
@@ -136,6 +145,13 @@ def execute_job(
     smoke: bool = False,
     output_root: Path | None = None,
 ) -> Path:
+    """Train one additional-analysis job and write its outputs.
+
+    Both the base and the additional configurations must still match their
+    recorded checksums. Completed output is reused only when its stored protocol
+    hash matches; a mismatch raises rather than silently retraining, so results
+    from different protocols can never be mixed in one tree.
+    """
     load_base_config(require_frozen=True)
     load_config(require_locked=not smoke)
     root = output_root or (SMOKE_RESULT_DIR if smoke else EXPERIMENT_RESULT_DIR)

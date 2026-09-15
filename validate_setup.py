@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import platform
+import re
+from pathlib import Path
 
 import chemprop
 import lightning
@@ -19,8 +21,10 @@ from rat_kp_core.jobs import build_job_manifests
 from rat_kp_core.paths import (
     AD_SENSITIVITY_DATA_PATH,
     AD_SENSITIVITY_JOB_MANIFEST_PATH,
+    AD_SENSITIVITY_SPLIT_DIR,
     CONDITION_SENSITIVITY_DATA_PATH,
     CONDITION_SENSITIVITY_JOB_MANIFEST_PATH,
+    CONDITION_SENSITIVITY_SPLIT_DIR,
     CONFIG_PATH,
     EXPERIMENT_RESULT_DIR,
     LONG_DATA_PATH,
@@ -28,6 +32,7 @@ from rat_kp_core.paths import (
     MANIFEST_DIR,
     PRIMARY_JOB_MANIFEST_PATH,
     SPLIT_DIR,
+    SPLIT_FILE_STEMS,
     STUDY_ROOT,
     TABULAR_FEATURE_CACHE_PATH,
     TABULAR_FEATURE_INDEX_PATH,
@@ -35,22 +40,98 @@ from rat_kp_core.paths import (
 from rat_kp_core.physiology import ContextEncoder, load_physiology
 
 
+# Declared repository layout. Every root-anchored path literal in the code base
+# must begin inside this layout, so no module can read from or write to a tree
+# that this repository does not define.
+#
+# This replaces an earlier guard that listed the directory names of the preceding
+# study generation and rejected any source file mentioning them. That form had
+# two defects: it published a private working-tree layout that is not part of the
+# release, and because the guard scanned its own source it had to hide its tokens
+# behind string concatenation. Declaring the permitted layout inverts the test.
+# It leaks nothing, needs no self-evasion, and stays correct as the layout grows,
+# whereas a deny list silently goes stale. It also catches the same class of
+# defect the deny list targeted: a module reaching into a tree that is not
+# shipped. The stale references to `data/processed/` and `manuscript/` that this
+# release removed would each have failed this check.
+DECLARED_ROOT_DIRECTORIES = frozenset({
+    "configs",
+    "data",
+    "docs",
+    "examples",
+    "manifests",
+    "results",
+    "scripts",
+    "submission_figures",
+    "tests",
+    "additional_context_analyses",
+    "injection_study",
+    "vss_output_propagation",
+    "rat_kp_controls",
+    "rat_kp_core",
+    "rat_kp_dvi",
+    "rat_kp_fusion",
+})
+DECLARED_DATA_SUBDIRECTORIES = frozenset({"cache", "generated_audit", "inputs"})
+ROOT_ANCHORED_PATH = re.compile(
+    r'\b(?:STUDY_ROOT|ROOT)\s*/\s*"([^"]+)"(?:\s*/\s*"([^"]+)")?'
+)
+
 EXPECTED_DATASETS = {
-    "primary": (LONG_DATA_PATH, STUDY_ROOT / "data" / "splits", 1270),
-    "ad_excluded": (
-        AD_SENSITIVITY_DATA_PATH,
-        STUDY_ROOT / "data" / "splits_sensitivity" / "ad_excluded",
-        1252,
-    ),
+    "primary": (LONG_DATA_PATH, SPLIT_DIR, 1270),
+    "ad_excluded": (AD_SENSITIVITY_DATA_PATH, AD_SENSITIVITY_SPLIT_DIR, 1252),
     "condition_specific": (
         CONDITION_SENSITIVITY_DATA_PATH,
-        STUDY_ROOT / "data" / "splits_sensitivity" / "condition_specific",
+        CONDITION_SENSITIVITY_SPLIT_DIR,
         1480,
     ),
 }
 
 
+def _audit_declared_layout():
+    """Reject source references to trees this repository does not define.
+
+    Scans every module for a path literal anchored at the repository root and
+    requires its leading segment to name a declared directory, or an existing
+    top-level script when a runner launches one as a subprocess. Paths under
+    ``data`` are checked one level deeper, because the request-only inputs,
+    the feature cache, and the generated audit tree are the only permitted
+    subtrees there. A literal that names a specific file must resolve, which
+    catches references to artifacts the release does not ship.
+    """
+    violations = []
+    for path in sorted(STUDY_ROOT.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        relative = str(path.relative_to(STUDY_ROOT))
+
+        def record(reference, reason):
+            """Append one layout violation for the module being scanned."""
+            violations.append({"path": relative, "reference": reference, "reason": reason})
+
+        for first, second in ROOT_ANCHORED_PATH.findall(path.read_text(encoding="utf-8")):
+            if Path(first).suffix:
+                if not (STUDY_ROOT / first).is_file():
+                    record(first, "missing file")
+            elif first not in DECLARED_ROOT_DIRECTORIES:
+                record(first, "undeclared directory")
+            elif first == "data" and second and second not in DECLARED_DATA_SUBDIRECTORIES:
+                record(f"data/{second}", "undeclared data subtree")
+            elif second and Path(second).suffix and not (STUDY_ROOT / first / second).is_file():
+                record(f"{first}/{second}", "missing file")
+    return violations
+
+
 def _validate_split_set(name, data_path, split_root, expected_rows):
+    """Verify one dataset and its split files against the frozen contract.
+
+    Checks row counts, tissue and identifier uniqueness, full row coverage in
+    every split, the presence of all three partition labels, and the absence of
+    parent-group leakage. LOTO folds additionally must isolate the held-out
+    tissue and leave the context encoder fit on exactly ten tissues.
+
+    Returns the dataset, the split checksums, and the LOTO fold summaries.
+    """
     data = read_csv(data_path)
     if len(data) != expected_rows or data["Tissue"].nunique() != 11:
         raise RuntimeError(f"{name} numerical data contract failed")
@@ -59,7 +140,7 @@ def _validate_split_set(name, data_path, split_root, expected_rows):
 
     summaries = []
     hashes = {}
-    for split_type in ("random", "scaffold"):
+    for split_type in SPLIT_FILE_STEMS:
         for seed in range(10):
             path = split_root / f"{split_type}_seed{seed}.csv"
             split = read_csv(path)
@@ -102,6 +183,12 @@ def _validate_split_set(name, data_path, split_root, expected_rows):
 
 
 def main() -> None:
+    """Run the fail-closed pre-experiment audit and write the validation manifest.
+
+    Every check raises rather than warning. The audit also refuses to pass once
+    any full job exists, so the recorded freeze always describes the state before
+    the study ran.
+    """
     all_hashes = {}
     loto_summaries = []
     frames = {}
@@ -130,21 +217,9 @@ def main() -> None:
     if cache_meta["long_data_sha256"] != sha256_file(LONG_DATA_PATH):
         raise RuntimeError("Molecular feature cache checksum mismatch")
 
-    forbidden = (
-        "kp_" + "scripts",
-        "results" + "/data",
-        "results" + "/splits",
-        "manuscript" + "/JPKPD2",
-        "JPKPD2_" + "study/results",
-    )
-    dependency_hits = []
-    for path in STUDY_ROOT.rglob("*.py"):
-        source = path.read_text(encoding="utf-8")
-        for token in forbidden:
-            if token in source:
-                dependency_hits.append({"path": str(path), "token": token})
-    if dependency_hits:
-        raise RuntimeError(f"Forbidden v1 dependencies: {dependency_hits}")
+    layout_violations = _audit_declared_layout()
+    if layout_violations:
+        raise RuntimeError(f"Undeclared repository layout references: {layout_violations}")
 
     preflight_path = STUDY_ROOT / "results" / "preflight" / "preflight_manifest.json"
     preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
@@ -214,7 +289,7 @@ def main() -> None:
         },
         "fixed_config_sha256": sha256_file(CONFIG_PATH),
         "tabular_feature_cache_sha256": sha256_file(TABULAR_FEATURE_CACHE_PATH),
-        "forbidden_dependency_matches": 0,
+        "declared_layout_violations": 0,
         "preflight_checks": 15,
         "gpu_preflight_checks": 15,
         "completed_full_jobs": completed_full_jobs,

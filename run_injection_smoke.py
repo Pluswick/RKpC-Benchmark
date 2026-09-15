@@ -18,6 +18,7 @@ SMOKE_CASES = {
 
 
 def main() -> None:
+    """Run the reduced CPU smoke jobs for the injection study."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--device", choices=["auto", "cpu", "gpu"], default="cpu")
     args = parser.parse_args()

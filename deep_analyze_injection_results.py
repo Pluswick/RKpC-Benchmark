@@ -42,10 +42,12 @@ LOTO_CONTRASTS = {
 
 
 def _sha256(path: Path) -> str:
+    """SHA-256 of a written output file, recorded in the analysis manifest."""
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _paired_summary(values: pd.Series) -> dict[str, float]:
+    """Summarize one set of paired split-seed differences with interval and p-value."""
     array = values.to_numpy(float)
     low, high = percentile_seed_ci(array)
     return {
@@ -59,6 +61,10 @@ def _paired_summary(values: pd.Series) -> dict[str, float]:
 
 
 def primary_performance(job_metrics: pd.DataFrame) -> pd.DataFrame:
+    """Mean observed-tissue performance per split scheme, model, and condition.
+
+    Supplies the performance grid shown in the manuscript figures.
+    """
     primary = job_metrics[
         (job_metrics.analysis_set == "primary") & (job_metrics.stage == "part1")
     ]
@@ -137,6 +143,13 @@ def model_pair_effects(job_metrics: pd.DataFrame) -> pd.DataFrame:
 
 
 def primary_tissue_results(predictions: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Break observed-tissue performance and context effects down by tissue.
+
+    Exploratory: these per-tissue contrasts are not part of any prespecified
+    multiplicity family.
+
+    Returns per-tissue performance and per-tissue context effects.
+    """
     primary = predictions[
         (predictions.analysis_set == "primary") & (predictions.stage == "part1")
     ].copy()
@@ -188,6 +201,7 @@ def primary_tissue_results(predictions: pd.DataFrame) -> tuple[pd.DataFrame, pd.
 
 
 def loto_tissue_performance(loto_predictions: pd.DataFrame) -> pd.DataFrame:
+    """Per-tissue LOTO performance for each model and condition."""
     frame = loto_predictions.copy()
     frame["residual"] = frame.y_pred - frame.y_true
     frame["absolute_error"] = frame.residual.abs()
@@ -205,6 +219,11 @@ def loto_tissue_performance(loto_predictions: pd.DataFrame) -> pd.DataFrame:
 
 
 def loto_cross_model_summary(loto_tissue_effects: pd.DataFrame) -> pd.DataFrame:
+    """Summarize how consistently a LOTO contrast points the same way across models.
+
+    Reports the spread across models and how many favour the comparison, so a
+    tissue where models disagree is visible rather than averaged away.
+    """
     return loto_tissue_effects.groupby(["contrast", "Tissue"], as_index=False).agg(
         n_models=("model", "nunique"),
         mean_delta_rmse=("delta_rmse", "mean"),
@@ -285,6 +304,13 @@ def loto_excluding_adipose(loto_predictions: pd.DataFrame) -> pd.DataFrame:
 
 
 def loto_context_extrapolation(plan: pd.DataFrame) -> pd.DataFrame:
+    """Measure how far each held-out tissue sits outside its training tissues.
+
+    Physiology descriptors are standardized on the ten training tissues of each
+    fold and the held-out tissue expressed in those units, giving a per-tissue
+    extrapolation distance that depends on no model. LOTO effects can then be
+    read against how far outside the fitted range each tissue lies.
+    """
     physiology = load_physiology()
     feature_names = list(physiology.select_dtypes(include=[np.number]).columns)
     loto = plan[
@@ -310,6 +336,10 @@ def loto_context_extrapolation(plan: pd.DataFrame) -> pd.DataFrame:
 
 
 def property_context_summary(property_metrics: pd.DataFrame) -> pd.DataFrame:
+    """Summarize context effects within each physicochemical descriptor stratum.
+
+    Exploratory and descriptive; strata are not a prespecified family.
+    """
     index = ["descriptor", "bin", "model", "split_type", "split_seed"]
     wide = property_metrics.pivot(index=index, columns="condition", values="rmse_log10").reset_index()
     rows = []
@@ -332,6 +362,11 @@ def property_context_summary(property_metrics: pd.DataFrame) -> pd.DataFrame:
 def sensitivity_direction_summary(
     context_effects: pd.DataFrame, position_effects: pd.DataFrame
 ) -> pd.DataFrame:
+    """Report whether each effect keeps its sign across the sensitivity datasets.
+
+    The question is direction, not magnitude: an effect that reverses sign on a
+    robustness dataset is fragile in a way a shifted mean is not.
+    """
     rows = []
     for family, frame in (
         ("context_vs_structure", context_effects),
@@ -352,6 +387,11 @@ def sensitivity_direction_summary(
 
 
 def main() -> None:
+    """Run the exploratory analyses and write their tables and manifest.
+
+    Every output is marked exploratory. These contrasts were not prespecified
+    and are not corrected within the primary multiplicity families.
+    """
     plan = build_plan()
     predictions = load_complete_predictions(plan)
     job_metrics = pd.read_csv(ANALYSIS_DIR / "all_job_metrics.csv", encoding="utf-8-sig")

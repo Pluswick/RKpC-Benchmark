@@ -23,6 +23,13 @@ CONTEXT_MODES = ("structure_only", "tissue_onehot", "physiology")
 
 
 def load_physiology() -> pd.DataFrame:
+    """Load the tissue physiology table, refusing any unrecorded edit.
+
+    These five descriptors are the entire physiology context, so a changed
+    value would silently redefine one of the study's conditions. The file is
+    therefore pinned by checksum and the contents are re-checked for 11
+    unique tissues and finite non-negative values.
+    """
     if sha256_file(PHYSIOLOGY_PATH) != PHYSIOLOGY_SHA256:
         raise ValueError("Independent physiological descriptor checksum mismatch")
     matrix = read_csv(PHYSIOLOGY_PATH)
@@ -37,6 +44,28 @@ def load_physiology() -> pd.DataFrame:
 
 @dataclass
 class ContextEncoder:
+    """Encode tissue context as nothing, a one-hot vector, or physiology descriptors.
+
+    ``structure_only`` produces a zero-width matrix, so the same code path
+    serves the no-context condition without a special case.
+
+    The encoder is fit on training rows only, and the distinction matters
+    most under leave-one-tissue-out evaluation:
+
+    * ``tissue_onehot`` keeps a fixed 11-column layout but emits an all-zero
+      row for a tissue absent from training. An unseen tissue therefore
+      carries no identity the model was ever trained to use, which is what
+      makes one-hot context unable to extrapolate to a new tissue.
+    * ``physiology`` standardizes on the training tissues, so an unseen
+      tissue is expressed in training units and may land far outside the
+      fitted range. That is the extrapolation the LOTO analysis measures.
+
+    ``tissue_equal`` scaling gives each training tissue equal weight when
+    computing the standardization, so unevenly sampled tissues do not pull
+    the mean and scale toward whichever tissue has the most records;
+    ``observation_weighted`` weights by record instead.
+    """
+
     mode: str
     matrix: pd.DataFrame
     scaling: str = "tissue_equal"
@@ -53,6 +82,7 @@ class ContextEncoder:
         self.tissue_order = self.matrix["tissue"].tolist()
 
     def fit(self, train: pd.DataFrame) -> "ContextEncoder":
+        """Record the training tissues and fit physiology standardization to them."""
         observed = set(train["Tissue"].astype(str).str.lower())
         if observed - set(self.tissue_order):
             raise ValueError("Training data contain unknown tissues")
@@ -70,6 +100,11 @@ class ContextEncoder:
         return self
 
     def transform(self, frame: pd.DataFrame) -> np.ndarray:
+        """Encode context for arbitrary rows using the fitted training statistics.
+
+        A tissue outside the known 11 raises; a known tissue that was absent
+        from training encodes as all zeros under ``tissue_onehot``.
+        """
         if not self.fitted_tissues:
             raise RuntimeError("Context encoder is not fit")
         tissues = frame["Tissue"].astype(str).str.lower().tolist()
@@ -90,10 +125,12 @@ class ContextEncoder:
         return (values - self.mean_) / self.scale_
 
     def fit_transform(self, train: pd.DataFrame) -> np.ndarray:
+        """Fit on the training rows and encode them in one call."""
         return self.fit(train).transform(train)
 
     @property
     def feature_names(self) -> list[str]:
+        """Column names of the encoded context, empty for ``structure_only``."""
         if self.mode == "tissue_onehot":
             return [f"tissue={t}" for t in self.tissue_order]
         if self.mode == "physiology":

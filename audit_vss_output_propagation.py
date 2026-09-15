@@ -1,3 +1,11 @@
+"""Audit the DVI propagation inputs and outputs before they are reported.
+
+Fail-closed pre-report check: verifies the tissue-volume table, confirms every
+required full-grid job completed, and re-derives the reported quantities from
+the stored outputs. Collects all failures and reports them together rather than
+raising on the first, so one run shows the full picture.
+"""
+
 from __future__ import annotations
 
 import json
@@ -12,6 +20,7 @@ from rat_kp_dvi.paths import ANALYSIS_DIR, EXPERIMENT_DIR, RESULT_DIR
 
 
 def main() -> None:
+    """Fail-closed audit of the DVI propagation inputs and outputs."""
     cfg = load_config(); failures = []; checks = {}
     volumes = cfg["tissue_volumes_ml"]
     checks["tissue_count"] = len(volumes)

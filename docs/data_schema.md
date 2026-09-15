@@ -20,6 +20,8 @@ Required training columns:
 
 Additional audit columns may be present in the request package. Training code ignores columns that are not required by the frozen contract.
 
+`examples/synthetic_processed_data.csv` is a four-record worked example of this schema, built from synthetic molecules and invented Kp values. It carries no real measurement and is not usable for training; it exists so the column contract can be checked without access to the request-only package.
+
 ## Source provenance boundary
 
 The private source workbook assigns one bibliographic source to every wide-format source row and is row-aligned with Kp_Data. Record-level source links remain in the request-only package. The RKpC Benchmark distributes `metadata/kp_data_source_bibliography.csv` and `.md`, which contain bibliographic facts and aggregate contribution counts only.
@@ -27,6 +29,10 @@ The private source workbook assigns one bibliographic source to every wide-forma
 When authorised local copies of both source files are available, `scripts/build_kp_data_source_bibliography.py` verifies row alignment, reapplies the frozen rat curation and aggregation chain, and regenerates those aggregate metadata files. It does not export compound names, structures, tissue-level Kp values, or record-level source links.
 
 ## Split files
+
+Split files live in `data/inputs/splits/` (`loto/` for the leave-one-tissue-out assignments) and in `data/inputs/splits_sensitivity/<analysis_set>/` for the two robustness datasets. They are named `<stem>_seed<N>.csv` for seeds 0-9.
+
+The stem for the manuscript's **parent-group** scheme is `random`, and the stem does not describe the partitioning rule. Both schemes assign whole parent groups, and no split divides a parent group across partitions; `validate_setup.py` rejects any file that does. The historical stem is kept because those exact filenames are published in the RKpC Benchmark record and are covered by the frozen split hashes. Resolve stems through `SPLIT_FILE_STEM` and `MANUSCRIPT_SPLIT_SCHEME` in `rat_kp_core/paths.py`, and see `docs/terminology.md`.
 
 Each split file must contain:
 

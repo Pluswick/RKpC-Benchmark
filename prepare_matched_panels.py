@@ -14,6 +14,8 @@ import numpy as np
 import pandas as pd
 from rdkit import Chem
 
+from rat_kp_dvi.paths import MATCHED_PANEL_DIR
+
 
 REPRESENTATIVE_CONFIGS = {
     "parent_group": ("gine", "onehot_early"),
@@ -22,6 +24,11 @@ REPRESENTATIVE_CONFIGS = {
 
 
 def canonical_smiles(value: object) -> str | None:
+    """Return the RDKit canonical isomeric SMILES, or None if unparseable.
+
+    Stereochemistry is retained, so stereoisomers stay distinct when paper
+    records are matched to training records.
+    """
     molecule = Chem.MolFromSmiles(str(value))
     if molecule is None:
         return None
@@ -29,6 +36,12 @@ def canonical_smiles(value: object) -> str | None:
 
 
 def prepare_paper_records(frame: pd.DataFrame, method: str) -> pd.DataFrame:
+    """Validate and log-transform one locally reconstructed paper record table.
+
+    Kp values must be strictly positive, since the analysis scale is log10
+    and a non-positive value indicates a transcription error rather than a
+    datum to carry forward.
+    """
     required = (
         "workbook_excel_row",
         "workbook_drug",
@@ -53,6 +66,13 @@ def prepare_paper_records(frame: pd.DataFrame, method: str) -> pd.DataFrame:
 
 
 def exact_paper_mapping(paper: pd.DataFrame, processed: pd.DataFrame) -> pd.DataFrame:
+    """Link paper records to training records by exact canonical SMILES and tissue.
+
+    Matching is exact by construction: no similarity threshold, name matching
+    or tissue harmonization is applied, so a link means the paper record and
+    the training record carry identical model inputs. Unmatched rows are kept
+    and flagged rather than dropped, so the matched fraction stays visible.
+    """
     required = {
         "row_index",
         "parent_group_id",
@@ -78,6 +98,12 @@ def exact_paper_mapping(paper: pd.DataFrame, processed: pd.DataFrame) -> pd.Data
 
 
 def select_representative_oof(predictions: pd.DataFrame) -> pd.DataFrame:
+    """Keep only the representative model and condition for each split scheme.
+
+    The representative configurations are fixed in ``REPRESENTATIVE_CONFIGS``
+    and were chosen from the internal analysis before the paper panels were
+    inspected, so this selection cannot be tuned to the comparison.
+    """
     required = {
         "split_type",
         "split_seed",
@@ -108,6 +134,18 @@ def select_representative_oof(predictions: pd.DataFrame) -> pd.DataFrame:
 def build_direct_panel(
     mappings: dict[str, pd.DataFrame], predictions: pd.DataFrame
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Build the matched direct panels from pre-existing held-out predictions.
+
+    Only predictions from splits in which the linked group was held out are
+    eligible, so no paper record is scored against a model that trained on
+    it. Eligible predictions are then averaged over those split seeds. Tissue
+    labels are re-checked after the join, because a row-index match that
+    disagreed on tissue would mean the link itself is wrong.
+
+    PT and RR panels are built separately and never pooled.
+
+    Returns the seed-level and the pooled record-level panels.
+    """
     seed_rows = []
     for method, mapping in mappings.items():
         available = mapping[mapping["exact_training_input_available"]].copy()
@@ -188,12 +226,15 @@ def build_direct_panel(
 
 
 def main() -> None:
+    """Build the matched panels and write them to a local, undistributed directory."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--processed-data", type=Path, required=True)
     parser.add_argument("--oof-predictions", type=Path, required=True)
     parser.add_argument("--pt-records", type=Path, required=True)
     parser.add_argument("--rr-records", type=Path, required=True)
-    parser.add_argument("--output", type=Path, default=Path("results/local_matched_panels"))
+    # Anchored to the repository root, not the working directory, so that
+    # rat_kp_dvi.analysis.build_literature_panel reads exactly what is written here.
+    parser.add_argument("--output", type=Path, default=MATCHED_PANEL_DIR)
     args = parser.parse_args()
 
     processed = pd.read_csv(args.processed_data, encoding="utf-8-sig")

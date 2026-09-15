@@ -22,6 +22,11 @@ CONFIG_SHA256 = "08d56f8a43bb4ab0c1b551f099e60dbe5b3f7b9ca13c73833f4c670954113c4
 
 
 def load_config() -> dict:
+    """Load the frozen core (v2) model configuration, refusing any unrecorded edit.
+
+    Pinned by checksum and re-checked for the frozen status marker, so an
+    edited protocol cannot produce results labelled as frozen.
+    """
     if sha256_file(CONFIG_PATH) != CONFIG_SHA256:
         raise ValueError("Independent fixed-model config checksum mismatch")
     config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
@@ -31,6 +36,19 @@ def load_config() -> dict:
 
 
 def build_tabular(model_key: str, seed: int, smoke: bool = False):
+    """Build one tabular baseline with its frozen hyperparameters.
+
+    These three baselines belong to the core stage and are not reported in the
+    manuscript; see ``docs/terminology.md``.
+
+    ``random_state_policy`` in the configuration records that the seed is
+    supplied per run rather than fixed in the file, so it is replaced here by
+    the actual run seed. LinearSVR is deterministic under the frozen settings
+    and carries a fixed seed instead.
+
+    ``smoke`` shrinks the model so an integration check runs quickly; smoke
+    metrics are never reported.
+    """
     cfg = dict(load_config()[model_key])
     if model_key == "random_forest":
         from sklearn.ensemble import RandomForestRegressor
@@ -65,6 +83,12 @@ class StudyMPNN(MPNN):
         self.study_weight_decay = float(weight_decay)
 
     def configure_optimizers(self):
+        """Apply the frozen weight decay on top of Chemprop's own optimizer.
+
+        Chemprop builds the optimizer and its warmup schedule internally, so the
+        weight decay is set on the returned parameter groups rather than by
+        constructing a different optimizer, which would discard that schedule.
+        """
         result = super().configure_optimizers()
         for group in result["optimizer"].param_groups:
             group["weight_decay"] = self.study_weight_decay
@@ -72,6 +96,12 @@ class StudyMPNN(MPNN):
 
 
 def build_d_mpnn(context_dim: int) -> StudyMPNN:
+    """Build the core-stage D-MPNN, widening the predictor input by the context.
+
+    The core stage fuses context only at the predictor, so there is no fusion
+    position argument here; the fusion-position comparison lives in
+    ``rat_kp_fusion.models``.
+    """
     cfg = load_config()["d_mpnn"]
     message = chemprop_nn.BondMessagePassing(
         d_h=cfg["message_hidden_dim"],
@@ -100,6 +130,8 @@ def build_d_mpnn(context_dim: int) -> StudyMPNN:
 
 
 class AttentiveFPWithContext(torch_nn.Module):
+    """AttentiveFP encoder whose pooled representation is concatenated with context."""
+
     def __init__(self, atom_dim: int, bond_dim: int, context_dim: int):
         super().__init__()
         cfg = load_config()["attentive_fp"]
@@ -120,6 +152,7 @@ class AttentiveFPWithContext(torch_nn.Module):
         )
 
     def forward(self, x, edge_index, edge_attr, batch, context):
+        """Encode the graph, then concatenate context before the prediction head."""
         graph = self.encoder(x, edge_index, edge_attr, batch)
         return self.head(torch.cat([graph, context], dim=1)).view(-1)
 
@@ -134,24 +167,29 @@ class AttentiveFPLightning(pl.LightningModule):
         self.config = load_config()["attentive_fp"]
 
     def forward(self, batch):
+        """Unpack a PyG batch into the wrapped network's positional arguments."""
         return self.network(
             batch.x, batch.edge_index, batch.edge_attr, batch.batch, batch.context
         )
 
     def training_step(self, batch, batch_idx):
+        """Mean squared error on log10(Kp) for one training batch."""
         loss = torch.nn.functional.mse_loss(self(batch), batch.y.reshape(-1))
         self.log("train_loss", loss, batch_size=batch.num_graphs, prog_bar=False)
         return loss
 
     def validation_step(self, batch, batch_idx):
+        """Validation loss, the quantity early stopping and best-state selection watch."""
         loss = torch.nn.functional.mse_loss(self(batch), batch.y.reshape(-1))
         self.log("val_loss", loss, batch_size=batch.num_graphs, prog_bar=False)
         return loss
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
+        """Detached predictions for one batch."""
         return self(batch).detach()
 
     def configure_optimizers(self):
+        """AdamW with the frozen learning rate and weight decay."""
         return torch.optim.AdamW(
             self.parameters(),
             lr=self.config["learning_rate"],
@@ -160,6 +198,12 @@ class AttentiveFPLightning(pl.LightningModule):
 
 
 def attentive_graph(smiles: str, context: torch.Tensor, target: float) -> Data:
+    """Featurize one molecule into a PyG graph carrying its context and target.
+
+    Uses the Chemprop v2 featurizer defaults so the PyG architectures and the
+    D-MPNN see identical atom and bond descriptions, leaving the architecture
+    as the only difference between them.
+    """
     molecule = Chem.MolFromSmiles(smiles)
     if molecule is None:
         raise ValueError(f"Invalid SMILES: {smiles}")

@@ -8,6 +8,7 @@ import os
 
 
 def main() -> None:
+    """Run the reduced smoke jobs for the additional-context analyses."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--device", choices=["cpu", "gpu"], default="cpu")
     parser.add_argument("--cuda-ordinal", type=int, default=0)

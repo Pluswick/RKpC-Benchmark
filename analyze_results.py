@@ -1,4 +1,11 @@
-"""Analyze completed v2 primary or data-sensitivity manifests without retraining."""
+"""Analyze completed core (v2) primary or data-sensitivity manifests.
+
+Reads stored per-job metrics and predictions; it never trains. The analysis is
+prespecified: contrasts, interval methods, and the multiplicity family are
+fixed before the numbers are seen, and every contract below raises rather than
+degrading silently, so a partial or reshaped result set cannot be summarized by
+accident.
+"""
 
 from __future__ import annotations
 
@@ -33,6 +40,13 @@ MANIFESTS = {
 
 
 def collect(manifest_path) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Load per-job metrics and predictions for every job in one manifest.
+
+    Refuses to return anything if any job is incomplete. Summarizing whichever
+    jobs happen to have finished would silently change the population behind an
+    effect estimate, so an incomplete manifest is an error rather than a
+    smaller analysis.
+    """
     manifest = pd.read_csv(manifest_path, encoding="utf-8-sig", keep_default_na=False)
     metric_rows, predictions, missing = [], [], []
     for job in manifest.itertuples(index=False):
@@ -55,6 +69,17 @@ def collect(manifest_path) -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 def part1_analysis(metrics: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Estimate observed-tissue context effects, paired within split seed.
+
+    Each context is compared against structure only on the same split seed, so
+    the 10 seeds give 10 paired differences per model and split scheme. Deltas
+    are signed ``structure_only - context``, making a positive value a context
+    improvement. Intervals come from a bootstrap over those paired seed
+    differences; the seed count is asserted because an unbalanced set would bias
+    the mean without any other symptom.
+
+    Returns the seed-level paired table and the per-comparison summary.
+    """
     part1 = metrics[metrics["stage"] == "part1"].copy()
     keys = ["model", "split_type", "split_seed"]
     pivot = part1.pivot(index=keys, columns="context", values="rmse_log10").reset_index()
@@ -89,6 +114,12 @@ def part1_analysis(metrics: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 def _seed_average_loto(predictions: pd.DataFrame) -> pd.DataFrame:
+    """Average LOTO predictions over training seeds, one row per record.
+
+    Seed-to-seed spread is retained as ``seed_sd``. The per-model seed count is
+    asserted against the frozen plan so that a missing run cannot quietly turn
+    a five-seed mean into a smaller one.
+    """
     loto = predictions[predictions["stage"] == "loto"].copy()
     keys = [
         "model",
@@ -121,6 +152,23 @@ def loto_analysis(
     *,
     primary: bool,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Estimate and test the leave-one-tissue-out physiology-context effect.
+
+    RMSE is computed per held-out tissue on seed-averaged predictions, so each
+    of the 11 tissues contributes once regardless of how many records it has;
+    the model-level effect is the unweighted mean of those tissue deltas, again
+    signed so that positive favours physiology context. Intervals resample
+    tissues and then records within tissue, matching that nesting, and the test
+    is an exact sign-flip over the 11 tissue deltas.
+
+    ``primary`` selects the multiplicity family: the primary datasets form the
+    prespecified FDR family, and the sensitivity datasets are corrected
+    separately as exploratory so they cannot dilute it. Column names differ
+    between the two so a reader cannot mistake one for the other.
+
+    Returns seed-averaged predictions, per-tissue effects, and model-level
+    inference.
+    """
     averaged = _seed_average_loto(predictions)
     tissue_metrics = (
         averaged.assign(squared_error=lambda x: (x.y_pred - x.y_true) ** 2)
@@ -179,6 +227,7 @@ def loto_analysis(
 
 
 def analyze_one(name: str) -> dict:
+    """Run both analyses for one dataset and write the result tables."""
     metrics, predictions = collect(MANIFESTS[name])
     output = ANALYSIS_RESULT_DIR / name
     output.mkdir(parents=True, exist_ok=True)
@@ -194,6 +243,7 @@ def analyze_one(name: str) -> dict:
 
 
 def main() -> None:
+    """Analyze one dataset, or all three when ``--analysis-set all`` is given."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--analysis-set",

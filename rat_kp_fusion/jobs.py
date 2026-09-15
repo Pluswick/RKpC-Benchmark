@@ -1,4 +1,8 @@
-"""Build the immutable 1,860-job plan without launching model training."""
+"""Build the immutable 1,860-job plan without launching model training.
+
+"Injection" is this code base's name for what the manuscript calls tissue
+context and fusion position; see docs/terminology.md.
+"""
 
 from __future__ import annotations
 
@@ -10,11 +14,15 @@ from rat_kp_core.data import read_csv
 from rat_kp_core.paths import (
     AD_SENSITIVITY_DATA_PATH,
     AD_SENSITIVITY_JOB_MANIFEST_PATH,
+    AD_SENSITIVITY_SPLIT_DIR,
     CONDITION_SENSITIVITY_DATA_PATH,
     CONDITION_SENSITIVITY_JOB_MANIFEST_PATH,
+    CONDITION_SENSITIVITY_SPLIT_DIR,
     LONG_DATA_PATH,
+    MANUSCRIPT_SPLIT_SCHEME,
     PRIMARY_JOB_MANIFEST_PATH,
     SPLIT_DIR,
+    SPLIT_FILE_STEM,
     STUDY_ROOT,
 )
 
@@ -45,13 +53,10 @@ LEGACY_CONTEXT_MAP = {
 }
 DATASETS = {
     "primary": (LONG_DATA_PATH, SPLIT_DIR),
-    "ad_excluded": (
-        AD_SENSITIVITY_DATA_PATH,
-        STUDY_ROOT / "data" / "splits_sensitivity" / "ad_excluded",
-    ),
+    "ad_excluded": (AD_SENSITIVITY_DATA_PATH, AD_SENSITIVITY_SPLIT_DIR),
     "condition_specific": (
         CONDITION_SENSITIVITY_DATA_PATH,
-        STUDY_ROOT / "data" / "splits_sensitivity" / "condition_specific",
+        CONDITION_SENSITIVITY_SPLIT_DIR,
     ),
 }
 LEGACY_MANIFESTS = {
@@ -62,10 +67,19 @@ LEGACY_MANIFESTS = {
 
 
 def _relative(path: Path) -> str:
+    """Render a path relative to the repository root for storage in a manifest."""
     return str(path.relative_to(STUDY_ROOT))
 
 
 def _execution_mode(model: str, condition: str) -> str:
+    """Decide whether a planned row is trained here or reused from the core stage.
+
+    D-MPNN and AttentiveFP under structure-only, one-hot-late, and
+    physiology-late are exactly the core (v2) conditions, so those runs are
+    reused rather than retrained. Reuse keeps the paired contrasts anchored to
+    the same fitted models the core stage reported, and avoids spending compute
+    reproducing them.
+    """
     if model in {"d_mpnn", "attentive_fp"} and condition in LEGACY_CONTEXT_MAP:
         return "legacy_reuse"
     return "new"
@@ -84,6 +98,7 @@ def _base_row(
     dataset_path: Path,
     split_path: Path,
 ) -> dict:
+    """Build one planned job row with its identifier and resolved settings."""
     context_type, injection_position = CONDITION_MAP[condition]
     job_id = (
         f"inject__{stage}__{analysis_set}__{split_type}__split{split_seed}__"
@@ -112,10 +127,11 @@ def _base_row(
 
 
 def _part1_rows(analysis_set: str) -> list[dict]:
+    """Enumerate the observed-tissue rows: two split schemes x 10 seeds x 4 models x 5 conditions."""
     dataset_path, split_dir = DATASETS[analysis_set]
     rows = []
     for split_type in ("parent_group", "scaffold"):
-        internal_split = "random" if split_type == "parent_group" else "scaffold"
+        internal_split = SPLIT_FILE_STEM[split_type]
         for split_seed in range(10):
             split_path = split_dir / f"{internal_split}_seed{split_seed}.csv"
             for model in MODELS:
@@ -136,6 +152,12 @@ def _part1_rows(analysis_set: str) -> list[dict]:
 
 
 def _loto_rows() -> list[dict]:
+    """Enumerate the leave-one-tissue-out rows for the primary dataset only.
+
+    One-hot conditions are excluded because an unseen tissue has no one-hot
+    identity the model was trained to use; only structure-only and the two
+    physiology positions can extrapolate to a new tissue.
+    """
     dataset_path, split_dir = DATASETS["primary"]
     tissues = sorted(read_csv(dataset_path)["Tissue"].astype(str).unique())
     rows = []
@@ -160,6 +182,13 @@ def _loto_rows() -> list[dict]:
 
 
 def _attach_legacy_mapping(plan: pd.DataFrame) -> pd.DataFrame:
+    """Resolve each reused row to the exact core-stage job that supplies its predictions.
+
+    Matching is on the full identity of a run -- dataset, stage, model, context,
+    split scheme, seeds, and held-out tissue -- and an unmatched row raises. A
+    silent miss would leave a reused arm of a paired contrast pointing at the
+    wrong predictions.
+    """
     legacy_frames = []
     for analysis_set, path in LEGACY_MANIFESTS.items():
         frame = pd.read_csv(path, encoding="utf-8-sig", keep_default_na=False)
@@ -170,7 +199,7 @@ def _attach_legacy_mapping(plan: pd.DataFrame) -> pd.DataFrame:
 
     lookup = {}
     for row in legacy.itertuples(index=False):
-        external_split = "parent_group" if row.split_type == "random" else row.split_type
+        external_split = MANUSCRIPT_SPLIT_SCHEME.get(row.split_type, row.split_type)
         key = (
             row.analysis_set_lookup,
             row.stage,
@@ -207,6 +236,7 @@ def _attach_legacy_mapping(plan: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_plan() -> pd.DataFrame:
+    """Build the immutable job plan, asserting its size and model order."""
     config = load_config()
     if tuple(config["models"]) != MODELS:
         raise RuntimeError("Config/model order mismatch")
@@ -235,6 +265,7 @@ def build_plan() -> pd.DataFrame:
 
 
 def write_plan() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Write the full plan and its new/reused partitions to the manifest directory."""
     MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
     plan = build_plan()
     new = plan[plan["execution_mode"] == "new"].reset_index(drop=True)

@@ -14,6 +14,7 @@ from rat_kp_controls.paths import CONFIG_PATH, PREFLIGHT_PATH, STUDY_ROOT
 
 
 def main() -> None:
+    """Write the additional-analysis plan and its preflight report."""
     load_base_config(require_frozen=True)
     config = load_config()
     plan = write_plan()

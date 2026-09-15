@@ -21,6 +21,7 @@ MAX_HEIGHT_MM = 234.0
 
 
 def sha256(path: Path) -> str:
+    """SHA-256 of a figure file, streamed so large rasters are not held in memory."""
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
@@ -29,6 +30,14 @@ def sha256(path: Path) -> str:
 
 
 def audit(directory: Path) -> None:
+    """Verify every submission figure against the journal's raster requirements.
+
+    Checks exact pixel dimensions, RGB mode, 600 dpi, the column width in
+    millimetres, and the page-height limit. Expected dimensions are pinned in
+    ``EXPECTED_PIXELS``, so changing a figure size in ``build_figures.py``
+    requires updating them here. All problems are collected and reported
+    together rather than raising on the first.
+    """
     errors: list[str] = []
     for stem, expected_size in EXPECTED_PIXELS.items():
         for suffix in (".png", ".tiff"):

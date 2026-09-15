@@ -1,4 +1,25 @@
+"""Build the four submission figures from the distributed aggregate outputs.
+
+Reads only the aggregate layout described in ``docs/reproducibility_spec.md``;
+it never touches record-level predictions. Each figure is written as both PNG
+and TIFF at the journal's column width and 600 dpi.
+
+Figure sizes are part of the deliverable, not a rendering preference:
+``scripts/audit_submission_figures.py`` asserts the exact pixel dimensions of
+every output, so changing a ``figsize`` here requires updating the expected
+sizes there. ``savefig.bbox`` is pinned to ``None`` below for the same reason --
+matplotlib's "tight" bounding box trims to the drawn content and would make the
+rendered size depend on tick-label lengths.
+
+The chemical-space panels of Figure 4 additionally require request-only
+structure-level inputs and cannot be regenerated from public data alone.
+
+Run ``scripts/audit_submission_figures.py`` after this script to verify
+dimensions, resolution, colour mode, and file integrity.
+"""
+
 import json
+import warnings
 from pathlib import Path
 
 import matplotlib as mpl
@@ -19,6 +40,10 @@ OUT.mkdir(parents=True, exist_ok=True)
 MM_TO_INCH = 1.0 / 25.4
 FIGURE_WIDTH_IN = 174.0 * MM_TO_INCH
 
+# Arial is the journal-requested face. It is not bundled with matplotlib, so on
+# a host without it matplotlib silently falls back to DejaVu Sans and the text
+# metrics -- and therefore the rendered figures -- differ from the submitted
+# ones. Install Arial before regenerating figures intended for resubmission.
 mpl.rcParams.update(
     {
         "font.family": "Arial",
@@ -62,6 +87,13 @@ CONDITION_LABEL = {
 
 
 def save(fig, stem):
+    """Write one figure as RGB PNG and LZW-compressed TIFF at 600 dpi.
+
+    Both files are forced to an opaque white background and to RGB mode.
+    Journals reject figures carrying an alpha channel or a palette, and
+    matplotlib emits RGBA whenever any artist is drawn with transparency, so
+    the mode is corrected after writing rather than assumed.
+    """
     png_path = OUT / f"{stem}.png"
     tiff_path = OUT / f"{stem}.tiff"
     fig.patch.set_facecolor("white")
@@ -89,6 +121,11 @@ def save(fig, stem):
 
 
 def box(ax, xy, width, height, text, face, edge=None, fontsize=9, weight="normal"):
+    """Draw one labelled rounded box of the Figure 1 schematic in axes coordinates.
+
+    Label colour is chosen for contrast against ``face``: white on the saturated
+    palette colours, dark on the light fill.
+    """
     edge = edge or face
     patch = FancyBboxPatch(
         xy,
@@ -115,6 +152,7 @@ def box(ax, xy, width, height, text, face, edge=None, fontsize=9, weight="normal
 
 
 def arrow(ax, start, end, color=COLORS["gray"], style="-|>", connection="arc3"):
+    """Draw one connector between schematic boxes in axes coordinates."""
     ax.add_patch(
         FancyArrowPatch(
             start,
@@ -129,6 +167,13 @@ def arrow(ax, start, end, color=COLORS["gray"], style="-|>", connection="arc3"):
 
 
 def figure_1():
+    """Figure 1: study schematic, drawn rather than derived from any result.
+
+    Panel a, the molecular and tissue-context inputs and the five conditions;
+    panel b, where context enters the network for early versus late fusion;
+    panel c, the evaluation hierarchy over architectures, split schemes, and
+    metrics. Coordinates are hand-placed in the unit square of each axis.
+    """
     fig, axes = plt.subplots(
         1,
         3,
@@ -192,6 +237,14 @@ def figure_1():
 
 
 def heatmap(ax, data, split_label, vmin, vmax):
+    """Draw the model-by-condition mean-RMSE grid for one split scheme.
+
+    Rows and columns are fixed in reporting order rather than the order the
+    input happens to arrive in, so the two split panels stay aligned. ``vmin``
+    and ``vmax`` are shared by both panels so a single colour bar applies to
+    each, and cell labels invert to white above the midpoint for contrast
+    against the dark end of the reversed viridis ramp.
+    """
     models = ["attentive_fp", "d_mpnn", "gcn", "gine"]
     conditions = [
         "structure_only",
@@ -229,6 +282,14 @@ def heatmap(ax, data, split_label, vmin, vmax):
 
 
 def forest(ax, data, title, xlab, color_map, label_fn):
+    """Draw a paired-effect forest plot of mean delta-RMSE with 95% intervals.
+
+    One row per comparison, ordered by split scheme then model then comparison.
+    Marker shape encodes the split scheme (circle, parent group; square,
+    scaffold) and colour encodes the comparison, so both dimensions stay
+    readable in greyscale print. Returns the plotted frame in row order so the
+    caller can align axis limits and annotations to it.
+    """
     plot = data.copy().sort_values(["split_type", "model", "comparison"])
     y = np.arange(len(plot))[::-1]
     for idx, (_, row) in enumerate(plot.iterrows()):
@@ -256,6 +317,14 @@ def forest(ax, data, title, xlab, color_map, label_fn):
 
 
 def figure_2():
+    """Figure 2: observed-tissue performance and paired context effects.
+
+    Panels a and b, mean test RMSE per model and condition under parent-group
+    and scaffold splitting, on one shared colour scale; panel c, each context
+    condition against structure only; panel d, early against late fusion. The
+    additive tissue-intercept control is appended from the additional-context
+    outputs so it appears alongside the five primary conditions.
+    """
     perf = pd.read_csv(ANALYSIS / "deep_dive" / "primary_performance_summary.csv")
     additive_jobs = pd.read_csv(ADDITIONAL_ANALYSIS / "all_additional_job_metrics.csv")
     additive_perf = (
@@ -326,6 +395,15 @@ def figure_2():
 
 
 def figure_3():
+    """Figure 3: leave-one-tissue-out fusion-position effects and their sensitivity.
+
+    Panel a, per-model tissue-equal delta-RMSE for early versus late physiology
+    fusion, under both the training-tissue z-scored context and the
+    unit-harmonized unstandardized context; panel b, the two preprocessing
+    variants plotted against each other per tissue, with adipose marked
+    separately; panel c, the same effects against each tissue's descriptor
+    extrapolation distance, with the two extreme tissues annotated.
+    """
     inf = pd.read_csv(ANALYSIS / "loto_inference.csv")
     extra = pd.read_csv(ANALYSIS / "deep_dive" / "loto_context_extrapolation.csv")
     raw_inf = pd.read_csv(ADDITIONAL_ANALYSIS / "loto_raw_inference.csv")
@@ -487,6 +565,17 @@ def figure_3():
 
 
 def figure_4():
+    """Figure 4: literature-benchmark comparison and chemical-space coverage.
+
+    Panels a-c characterise the chemical space of the matched direct panels
+    against the rest of the dataset; the final panel compares the reduced-input
+    GNN against the PT or RR equation within each paper panel and split scheme,
+    with 95% intervals. Each paper panel is evaluated against its own
+    experimental target, so PT and RR bars are never pooled.
+
+    The chemical-space inputs are generated from request-only structure-level
+    data and are not reproducible from the public aggregate outputs alone.
+    """
     benchmark_dir = ANALYSIS / "separate_literature_benchmarks"
     benchmark = pd.read_csv(benchmark_dir / "direct_panel_metrics.csv")
     chemistry = pd.read_csv(
@@ -703,7 +792,29 @@ def figure_4():
     save(fig, "Fig4")
 
 
+def verify_font() -> None:
+    """Warn loudly if Arial is unavailable and the figures would silently change.
+
+    matplotlib falls back to DejaVu Sans without raising when a requested family
+    is missing. The substitution changes text metrics but not image dimensions,
+    so ``audit_submission_figures.py`` still passes and the difference can reach
+    a journal unnoticed. This makes the substitution visible at generation time.
+    """
+    from matplotlib import font_manager
+
+    available = {font.name for font in font_manager.fontManager.ttflist}
+    if "Arial" not in available:
+        warnings.warn(
+            "Arial is not installed. matplotlib will substitute a fallback face, "
+            "so these figures will not match the submitted ones. Install Arial "
+            "before regenerating figures intended for submission.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
+
 if __name__ == "__main__":
+    verify_font()
     figure_1()
     figure_2()
     figure_3()

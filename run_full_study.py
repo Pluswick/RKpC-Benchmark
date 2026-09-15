@@ -72,12 +72,19 @@ def verify_frozen_inputs() -> dict:
 
 
 def run(command: list[str]) -> None:
+    """Run one subprocess from the repository root, aborting on a non-zero exit."""
     completed = subprocess.run(command, cwd=STUDY_ROOT, check=False)
     if completed.returncode != 0:
         raise SystemExit(completed.returncode)
 
 
 def main() -> None:
+    """Verify the frozen inputs, then run every core job and its analysis.
+
+    The freeze is verified before anything executes, so a changed dataset,
+    configuration, or job manifest stops the run instead of silently producing
+    results that no longer match the recorded protocol.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--device", choices=["auto", "cpu", "gpu"], default="auto")
     parser.add_argument("--dry-run", action="store_true")

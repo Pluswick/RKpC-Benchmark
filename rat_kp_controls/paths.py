@@ -1,3 +1,10 @@
+"""Repository-relative locations for the additive-tissue-intercept analyses.
+
+The manuscript calls these the additive tissue-intercept control and the
+preprocessing-robustness analyses; on disk they live under
+``additional_context_analyses``. See ``docs/terminology.md``.
+"""
+
 from pathlib import Path
 
 

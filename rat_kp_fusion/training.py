@@ -42,6 +42,7 @@ PREDICTION_COLUMNS = [
 
 
 def metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
+    """Test metrics on log10(Kp), including 2- and 3-fold accuracy fractions."""
     residual = np.asarray(y_pred, float) - np.asarray(y_true, float)
     absolute = np.abs(residual)
     return {
@@ -53,28 +54,40 @@ def metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
 
 
 class GraphRegressor(pl.LightningModule):
+    """Lightning wrapper applying the shared training controls to a PyG model.
+
+    Loss, optimizer, and learning rate come from the frozen shared neural
+    settings, so every architecture and condition trains identically and no
+    condition receives its own tuning.
+    """
+
     def __init__(self, network: torch.nn.Module):
         super().__init__()
         self.network = network
         self.cfg = load_config()["shared_neural"]
 
     def forward(self, batch):
+        """Run the wrapped network on one PyG batch."""
         return self.network(batch)
 
     def training_step(self, batch, batch_idx):
+        """Mean squared error on log10(Kp) for one training batch."""
         loss = torch.nn.functional.mse_loss(self(batch), batch.y.reshape(-1))
         self.log("train_loss", loss, batch_size=batch.num_graphs)
         return loss
 
     def validation_step(self, batch, batch_idx):
+        """Validation loss, the quantity early stopping and best-state selection watch."""
         loss = torch.nn.functional.mse_loss(self(batch), batch.y.reshape(-1))
         self.log("val_loss", loss, batch_size=batch.num_graphs)
         return loss
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
+        """Detached predictions for one batch."""
         return self(batch).detach()
 
     def configure_optimizers(self):
+        """AdamW with the frozen shared learning rate and weight decay."""
         return torch.optim.AdamW(
             self.parameters(),
             lr=self.cfg["learning_rate"],
@@ -83,6 +96,16 @@ class GraphRegressor(pl.LightningModule):
 
 
 def _trainer(device: str, smoke: bool):
+    """Build the Lightning trainer and the in-memory best-state callback.
+
+    Deterministic execution is required, checkpointing and logging are off,
+    and the best validation state is kept in memory and restored before
+    prediction rather than written to disk.
+
+    ``smoke`` reduces the run to a single epoch on a single batch and drops
+    early stopping. Smoke output is an integration check only and its
+    metrics are never reported.
+    """
     cfg = load_config()["shared_neural"]
     best = BestStateInMemory()
     callbacks = [best]
@@ -112,6 +135,14 @@ def _trainer(device: str, smoke: bool):
 
 
 def _context(job: pd.Series, frames: dict[str, pd.DataFrame]):
+    """Encode tissue context for every partition, fit on training rows only.
+
+    The encoder is fit on the training partition alone, so validation and
+    test rows are transformed with training-derived statistics and no
+    held-out information reaches the standardization. This matters most
+    under LOTO, where the held-out tissue is by construction absent from
+    the fitted statistics.
+    """
     encoder = ContextEncoder(
         str(job["context_type"]),
         load_physiology(),
@@ -121,11 +152,13 @@ def _context(job: pd.Series, frames: dict[str, pd.DataFrame]):
 
 
 def _pyg_graph(smiles: str, context: np.ndarray, target: float) -> Data:
+    """Build one PyG graph carrying its context vector and target."""
     base = attentive_graph(smiles, torch.from_numpy(context), target)
     return base
 
 
 def _pyg_datasets(frames, contexts):
+    """Featurize each partition into a list of graphs, preserving row order."""
     return {
         name: [
             _pyg_graph(row.SMILES, contexts[name][index], row.log10Kp)
@@ -136,6 +169,11 @@ def _pyg_datasets(frames, contexts):
 
 
 def _pyg_loaders(graphs, seed: int):
+    """Build loaders that shuffle only the training partition, under a fixed seed.
+
+    Each loader gets its own seeded generator and no worker processes, so
+    batch composition is reproducible run to run.
+    """
     batch_size = load_config()["shared_neural"]["batch_size"]
     output = {}
     for name, values in graphs.items():
@@ -151,6 +189,7 @@ def _pyg_loaders(graphs, seed: int):
 
 
 def _fit_pyg(job, frames, contexts, device, smoke):
+    """Train one PyG architecture and predict the test partition."""
     graphs = _pyg_datasets(frames, contexts)
     loaders = _pyg_loaders(graphs, int(job["training_seed"]))
     first = graphs["train"][0]
@@ -180,6 +219,12 @@ def _fit_pyg(job, frames, contexts, device, smoke):
 
 
 def _chemprop_dataset(frame, context, injection_position: str):
+    """Build a Chemprop dataset, attaching context per the fusion position.
+
+    Early fusion supplies the context as an extra atom feature so it enters each
+    directed-bond initial message; late fusion supplies it as a molecule-level
+    feature consumed by the predictor.
+    """
     context_dim = context.shape[1]
     datapoints = []
     for index, row in enumerate(frame.itertuples(index=False)):
@@ -203,6 +248,7 @@ def _chemprop_dataset(frame, context, injection_position: str):
 
 
 def _fit_d_mpnn(job, frames, contexts, device, smoke):
+    """Train the D-MPNN and predict the test partition."""
     position = str(job["injection_position"])
     context_dim = contexts["train"].shape[1]
     datasets = {
@@ -240,6 +286,17 @@ def execute_new_job(
     smoke: bool = False,
     output_root: Path | None = None,
 ) -> Path:
+    """Train one new job and write its predictions, metrics, and run record.
+
+    Reused core (v2) rows are rejected outright: they must be read from the
+    core results tree, never retrained here, or the reused and new arms of
+    a paired contrast would stop being comparable.
+
+    Completed output is reused only when its recorded configuration hash
+    still matches the current one. A mismatch is an error rather than a
+    silent retrain, so results produced under different protocols can never
+    be mixed in one tree.
+    """
     if str(job["execution_mode"]) != "new":
         raise ValueError("Legacy reuse rows must never be trained by the extension runner")
     load_config(require_frozen=not smoke)

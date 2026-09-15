@@ -10,6 +10,12 @@ import numpy as np
 BOOTSTRAP_SEED = 20260619
 BOOTSTRAP_REPLICATES = 10_000
 
+# Exhaustive sign-flip enumeration costs 2**n. The real families are ten paired
+# split seeds or eleven held-out tissues, so this cap cannot be reached by a
+# legitimate run; it turns an accidental misuse into an error rather than an
+# apparent hang.
+MAX_SIGN_FLIP_DIFFERENCES = 20
+
 
 def percentile_ci(values: np.ndarray, replicates: int = BOOTSTRAP_REPLICATES) -> tuple[float, float]:
     """Bootstrap split seeds for the Part 1 paired mean effect."""
@@ -20,7 +26,20 @@ def percentile_ci(values: np.ndarray, replicates: int = BOOTSTRAP_REPLICATES) ->
 
 
 def exact_sign_flip_pvalue(deltas: np.ndarray) -> float:
+    """Two-sided exact sign-flip test on paired differences.
+
+    Enumerates all 2**n sign assignments rather than sampling them, so the
+    p-value is exact and identical on every run. It is valid because the null
+    hypothesis is symmetry of the paired differences about zero, which needs no
+    distributional assumption. Exhaustive enumeration is only tractable for the
+    small n used here (10 split seeds, or 11 held-out tissues).
+    """
     deltas = np.asarray(deltas, dtype=float)
+    if len(deltas) > MAX_SIGN_FLIP_DIFFERENCES:
+        raise ValueError(
+            f"Exact sign-flip enumeration is capped at {MAX_SIGN_FLIP_DIFFERENCES} "
+            f"paired differences; received {len(deltas)}"
+        )
     observed = abs(deltas.mean())
     statistics = [
         abs(np.mean(deltas * np.asarray(signs, dtype=float)))
@@ -30,6 +49,11 @@ def exact_sign_flip_pvalue(deltas: np.ndarray) -> float:
 
 
 def benjamini_hochberg(pvalues: np.ndarray) -> np.ndarray:
+    """Benjamini-Hochberg adjusted p-values, returned in the input order.
+
+    The running minimum over the reversed ranking enforces monotonicity, so an
+    adjusted value can never fall below one from a smaller raw p-value.
+    """
     pvalues = np.asarray(pvalues, dtype=float)
     order = np.argsort(pvalues)
     ranked = pvalues[order]

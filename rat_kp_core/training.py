@@ -38,6 +38,18 @@ PREDICTION_COLUMNS = [
 
 
 def load_job_frames(job: pd.Series) -> dict[str, pd.DataFrame]:
+    """Load and partition one job's dataset, re-verifying every leakage guarantee.
+
+    The split file carries a copy of the identity columns and they are checked
+    against the dataset after the join, so a split built for a different dataset
+    revision cannot be applied silently.
+
+    Leakage checks are re-run here at training time rather than trusted from
+    split construction: no parent group may span train and validation, none may
+    reach the observed-tissue test partition, and under LOTO the held-out tissue
+    must be absent from training entirely. A violation raises rather than
+    producing an optimistic result.
+    """
     dataset_path = STUDY_ROOT / str(job["dataset_path"])
     long_df = read_csv(dataset_path)
     required_data = {"row_index", "parent_group_id", "identity_unit_id", "SMILES", "Tissue", "log10Kp"}
@@ -81,6 +93,7 @@ def load_job_frames(job: pd.Series) -> dict[str, pd.DataFrame]:
 
 
 def _metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
+    """Test metrics on log10(Kp), including 2- and 3-fold accuracy fractions."""
     residual = y_pred - y_true
     abs_residual = np.abs(residual)
     return {
@@ -92,6 +105,7 @@ def _metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
 
 
 def _context_arrays(job: pd.Series, frames: dict[str, pd.DataFrame]):
+    """Fit the context encoder on training rows and encode every partition."""
     encoder = ContextEncoder(
         str(job["context"]),
         load_physiology(),
@@ -101,6 +115,12 @@ def _context_arrays(job: pd.Series, frames: dict[str, pd.DataFrame]):
 
 
 def _fit_tabular(job: pd.Series, frames: dict[str, pd.DataFrame], smoke: bool):
+    """Fit one tabular baseline and predict the test partition.
+
+    Preprocessing statistics are fit on training rows only. Fit-time warnings
+    are captured and stored in the run record rather than printed, so a
+    convergence warning stays attached to the job that produced it.
+    """
     encoder = ContextEncoder(
         str(job["context"]),
         load_physiology(),
@@ -135,6 +155,7 @@ def _fit_tabular(job: pd.Series, frames: dict[str, pd.DataFrame], smoke: bool):
 
 
 def _chemprop_dataset(frame: pd.DataFrame, context: np.ndarray) -> MoleculeDataset:
+    """Build a Chemprop dataset with context as a molecule-level feature."""
     return MoleculeDataset([
         MoleculeDatapoint.from_smi(
             row.SMILES,
@@ -150,6 +171,13 @@ def _trainer(
     device: str,
     smoke: bool,
 ) -> tuple[pl.Trainer, "BestStateInMemory"]:
+    """Build the Lightning trainer and the in-memory best-state callback.
+
+    Deterministic execution is required and checkpointing is disabled; the best
+    validation state is kept in memory and restored before prediction instead.
+    ``smoke`` reduces the run to a single epoch on a single batch and drops
+    early stopping.
+    """
     best_state = BestStateInMemory()
     callbacks = [best_state]
     if not smoke:
@@ -186,6 +214,11 @@ class BestStateInMemory(Callback):
         self.best_state = None
 
     def on_validation_epoch_end(self, trainer, pl_module):
+        """Capture the weights whenever validation loss reaches a new minimum.
+
+        Sanity-check passes are ignored, since they run before training and would
+        otherwise set the baseline from an untrained model.
+        """
         if trainer.sanity_checking:
             return
         score = trainer.callback_metrics.get("val_loss")
@@ -201,12 +234,14 @@ class BestStateInMemory(Callback):
             }
 
     def restore(self, model):
+        """Load the retained best weights, raising if none were ever captured."""
         if self.best_state is None:
             raise RuntimeError("No validation state was captured")
         model.load_state_dict(self.best_state)
 
 
 def _fit_d_mpnn(job, frames, context, output_dir, device, smoke):
+    """Train the core-stage D-MPNN and predict the test partition."""
     cfg = load_config()["d_mpnn"]
     datasets = {key: _chemprop_dataset(frames[key], context[key]) for key in frames}
     loaders = {
@@ -232,6 +267,7 @@ def _fit_d_mpnn(job, frames, context, output_dir, device, smoke):
 
 
 def _pyg_loader(graphs, batch_size, shuffle, seed):
+    """Build a PyG loader with a seeded generator and no worker processes."""
     generator = torch.Generator().manual_seed(seed)
     return PyGDataLoader(
         graphs, batch_size=batch_size, shuffle=shuffle, num_workers=0, generator=generator
@@ -239,6 +275,7 @@ def _pyg_loader(graphs, batch_size, shuffle, seed):
 
 
 def _fit_attentive(job, frames, context, output_dir, device, smoke):
+    """Train the core-stage AttentiveFP and predict the test partition."""
     cfg = load_config()["attentive_fp"]
     graphs = {
         key: [
@@ -269,6 +306,13 @@ def _fit_attentive(job, frames, context, output_dir, device, smoke):
 
 
 def _prediction_frame(job: pd.Series, test: pd.DataFrame, prediction: np.ndarray) -> pd.DataFrame:
+    """Assemble the frozen prediction schema for one job.
+
+    Every row keeps its job, split, seed, source row, parent group, identity
+    unit, SMILES, and tissue alongside the observed and predicted target, so a
+    prediction file can be re-aggregated later without consulting the plan.
+    Prediction count and finiteness are asserted before anything is written.
+    """
     if len(prediction) != len(test) or not np.isfinite(prediction).all():
         raise RuntimeError("Prediction count or finiteness check failed")
     result = pd.DataFrame({

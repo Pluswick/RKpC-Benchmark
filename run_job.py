@@ -16,6 +16,7 @@ from rat_kp_core.training import execute_job
 
 
 def main() -> None:
+    """Execute exactly one manifest row, selected by job identifier."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--manifest",

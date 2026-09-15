@@ -10,6 +10,7 @@ import pandas as pd
 
 
 def main() -> None:
+    """Run every pending additional-context job."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--device", choices=["auto", "cpu", "gpu"], default="auto")
     parser.add_argument("--cuda-ordinal", type=int, default=0)

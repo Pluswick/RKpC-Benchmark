@@ -22,12 +22,20 @@ RANGE_RE = re.compile(
 
 
 def sha256_file(path: str | Path) -> str:
+    """SHA-256 of a file's bytes, used throughout to pin frozen inputs."""
     import hashlib
 
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 def read_csv(path: str | Path) -> pd.DataFrame:
+    """Read a CSV, trying the encodings this project's source tables use.
+
+    The curated source workbooks were produced on Korean-locale Windows, so
+    UTF-8 with or without BOM and the CP949/EUC-KR code pages are all tried
+    before giving up. Failing loudly is deliberate: silently substituting
+    replacement characters would corrupt compound names.
+    """
     for encoding in ("utf-8-sig", "utf-8", "cp949", "euc-kr"):
         try:
             return pd.read_csv(path, encoding=encoding)
@@ -37,6 +45,13 @@ def read_csv(path: str | Path) -> pd.DataFrame:
 
 
 def _parse_kp(value: object) -> float:
+    """Parse one reported Kp cell, resolving a two-value range to its geometric mean.
+
+    Some sources report a range rather than a point value. Because the analysis
+    scale is log10, the midpoint on that scale is the geometric mean of the
+    endpoints, not the arithmetic mean. Unparseable or non-positive entries
+    return NaN and are dropped downstream rather than being guessed at.
+    """
     if pd.isna(value) or not str(value).strip():
         return float("nan")
     try:
@@ -79,6 +94,7 @@ def build_rat_long(raw_path: str | Path) -> pd.DataFrame:
     long_df["_log10Kp"] = np.log10(long_df["Kp"].astype(float))
 
     def join_unique(values: pd.Series) -> str:
+        """Join the distinct non-null values of a group into one sorted label."""
         return " | ".join(sorted({str(v).strip() for v in values if pd.notna(v)}))
 
     result = (

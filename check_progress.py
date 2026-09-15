@@ -13,6 +13,11 @@ from rat_kp_core.paths import (
 
 
 def summarize(path, label):
+    """Count complete, failed, and pending jobs for one manifest.
+
+    A job counts as complete only with its marker, run record, and predictions
+    all present, so a partially written directory is not mistaken for a result.
+    """
     jobs = pd.read_csv(path, encoding="utf-8-sig", keep_default_na=False)
     complete = failed = 0
     for row in jobs.itertuples(index=False):

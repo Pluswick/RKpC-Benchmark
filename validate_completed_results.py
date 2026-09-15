@@ -54,6 +54,7 @@ EXPECTED_ANALYSIS_ROWS = {
 
 
 def main() -> None:
+    """Audit every completed job and analysis output without reading performance values."""
     config_hash = sha256_file(CONFIG_PATH)
     seen_job_ids = set()
     job_summaries = {}

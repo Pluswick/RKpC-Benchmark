@@ -8,9 +8,10 @@ import os
 
 
 def main() -> None:
+    """Run the 20 frozen full-context jobs needed for 11-tissue inference."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--device", choices=["cpu", "gpu"], default="gpu")
-    parser.add_argument("--cuda-ordinal", type=int, default=1)
+    parser.add_argument("--cuda-ordinal", type=int, default=0)
     parser.add_argument("--max-jobs", type=int, default=None)
     parser.add_argument("--confirm", action="store_true")
     args = parser.parse_args()

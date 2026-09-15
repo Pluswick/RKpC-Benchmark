@@ -1,3 +1,23 @@
+"""Propagate predicted Kp to a tissue-volume-weighted distribution index (DVI).
+
+DVI is the volume-weighted contribution of the modelled tissues,
+``sum_t(V_t * Kp_t) / BW``. It is an output-propagation endpoint related to
+steady-state volume of distribution, **not** an estimate or validation of
+whole-body Vss: it omits residual tissues, compound-specific blood-to-plasma
+partitioning, and any dynamic PBPK term.
+
+Predictions are summed on the linear Kp scale, so every panel converts out of
+log10 before aggregating and back afterwards. Out-of-fold estimates are
+averaged across split seeds on the linear scale as well, before the log is
+taken for evaluation.
+
+Three panels are produced: the observed panel, restricted to identity units
+with enough measured tissues and using the same tissue set for the experimental
+and predicted values; an exploratory complete 11-tissue grid; and the PT/RR
+literature panels, each evaluated on its own source paper's tissue set. This
+module consumes predictions only and trains nothing.
+"""
+
 from __future__ import annotations
 
 import json
@@ -7,21 +27,24 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from rat_kp_core.paths import LONG_DATA_PATH
 from rat_kp_fusion.jobs import build_plan as build_injection_plan
 from rat_kp_fusion.paths import EXPERIMENT_RESULT_DIR as INJECTION_DIR, STUDY_ROOT
 from rat_kp_controls.jobs import build_plan as build_additional_plan
 from rat_kp_controls.paths import EXPERIMENT_RESULT_DIR as ADDITIONAL_DIR
 from .config import load_config
-from .paths import ANALYSIS_DIR, EXPERIMENT_DIR
+from .paths import ANALYSIS_DIR, EXPERIMENT_DIR, MATCHED_PANEL_RECORDS_PATH
 
 
 def _injection_prediction_path(row: pd.Series) -> Path:
+    """Locate one job's stored predictions, in this study's tree or the core one."""
     if str(row["execution_mode"]) == "legacy_reuse":
         return STUDY_ROOT / str(row["legacy_result_path"]) / "predictions.csv"
     return INJECTION_DIR / str(row["analysis_set"]) / str(row["stage"]) / str(row["job_id"]) / "predictions.csv"
 
 
 def _job(split_type: str, seed: int, model: str, condition: str) -> pd.Series:
+    """Find the single planned job matching one split, seed, model, and condition."""
     plan = build_injection_plan()
     rows = plan[
         plan["analysis_set"].eq("primary") & plan["stage"].eq("part1")
@@ -34,6 +57,7 @@ def _job(split_type: str, seed: int, model: str, condition: str) -> pd.Series:
 
 
 def _additive_job(split_type: str, seed: int, model: str) -> pd.Series:
+    """Find the matching additive tissue-intercept control job."""
     plan = build_additional_plan()
     rows = plan[
         plan["analysis"].eq("primary_context_decomposition")
@@ -46,6 +70,11 @@ def _additive_job(split_type: str, seed: int, model: str) -> pd.Series:
 
 
 def _read_primary_predictions(split_type: str, seed: int, model: str, full_condition: str) -> dict[str, pd.DataFrame]:
+    """Load the three comparator prediction sets for one split seed.
+
+    Structure-only, the additive control, and the full-context model are read
+    together so every panel is built from the same held-out records.
+    """
     structure = pd.read_csv(_injection_prediction_path(_job(split_type, seed, model, "structure_only")), encoding="utf-8-sig")
     full = pd.read_csv(_injection_prediction_path(_job(split_type, seed, model, full_condition)), encoding="utf-8-sig")
     additive_row = _additive_job(split_type, seed, model)
@@ -57,6 +86,14 @@ def _read_primary_predictions(split_type: str, seed: int, model: str, full_condi
 
 
 def _aggregate_panel(frame: pd.DataFrame, volumes: dict[str, float], bw: float) -> pd.DataFrame:
+    """Sum volume-weighted Kp over one identity unit's tissue panel.
+
+    Predictions arrive as log10(Kp) but the sum is physical, so each tissue
+    term is converted back to the linear scale before weighting, and the
+    log is retaken only on the summed index. An unmapped tissue raises
+    rather than contributing nothing, since a silently dropped tissue would
+    shrink the index without any other symptom.
+    """
     work = frame.copy()
     work["volume_ml"] = work["Tissue"].map(volumes)
     if work["volume_ml"].isna().any():
@@ -78,6 +115,16 @@ def _aggregate_panel(frame: pd.DataFrame, volumes: dict[str, float], bw: float) 
 
 
 def build_observed_panel() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Build the observed-panel DVI for each identity unit and comparator.
+
+    Experimental and predicted indices use exactly the same tissue panel per
+    identity unit, so the comparison never contrasts different tissue sets.
+    Out-of-fold estimates are averaged across the split seeds in which an
+    identity unit was held out, and that averaging happens on the linear
+    scale, matching the scale on which the index is summed.
+
+    Returns the seed-level and the seed-averaged panels.
+    """
     cfg = load_config(); volumes = cfg["tissue_volumes_ml"]; bw = float(cfg["body_weight_g"])
     rows = []
     for split_type, spec in cfg["representative_models"].items():
@@ -105,6 +152,17 @@ def build_observed_panel() -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 def _two_way_full_grid(frame: pd.DataFrame, tissues: list[str]) -> tuple[pd.DataFrame, float]:
+    """Recover an additive model's full tissue grid from its test predictions.
+
+    The additive control predicts a molecule term plus a tissue term, so its
+    prediction for an unobserved tissue is determined by predictions already
+    made. Least squares recovers the two sets of terms, with the first
+    tissue absorbed into the molecule terms to keep the design full rank.
+
+    Returns the reconstructed grid and the maximum absolute reconstruction
+    residual, which the caller records: a large residual would mean the
+    fitted model was not additive and the grid should not be trusted.
+    """
     work = frame.copy()
     identities = sorted(work["identity_unit_id"].unique().tolist(), key=str)
     observed_tissues = sorted(work["Tissue"].unique().tolist())
@@ -135,6 +193,18 @@ def _two_way_full_grid(frame: pd.DataFrame, tissues: list[str]) -> tuple[pd.Data
 
 
 def build_full_grid() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Build the exploratory complete 11-tissue grid and its evaluation subset.
+
+    Restricted to the parent-group representative configuration; the scaffold
+    counterpart is excluded because its original runs could not be
+    reproduced (see ``rat_kp_dvi.training`` and the configuration's
+    ``protocol_amendment``). Only identity units with experimental Kp for
+    all 11 tissues can be scored, which is a handful of compounds, so the
+    result is exploratory.
+
+    Returns the tissue grid, identity-averaged indices, the scorable subset,
+    and the additive reconstruction audit.
+    """
     cfg = load_config(); tissues = list(cfg["tissue_volumes_ml"]); volumes = cfg["tissue_volumes_ml"]; bw = float(cfg["body_weight_g"])
     split_type = "parent_group"; spec = cfg["representative_models"][split_type]
     grid_rows = []; dvi_rows = []; recon_rows = []
@@ -163,7 +233,7 @@ def build_full_grid() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.Data
         n_oof_seeds=("split_seed", "nunique"), dvi_11_pred_L_per_kg=("dvi_11_pred_L_per_kg", "mean"),
         partial_vss_11_Rb1_L_per_kg=("partial_vss_11_Rb1_L_per_kg", "mean"),
     )
-    long_df = pd.read_csv(STUDY_ROOT / "data" / "processed" / "rat_kp_long.csv", encoding="utf-8-sig")
+    long_df = pd.read_csv(LONG_DATA_PATH, encoding="utf-8-sig")
     observed = long_df.copy(); observed["volume_ml"] = observed["Tissue"].map(volumes)
     complete_ids = observed.groupby("identity_unit_id")["Tissue"].nunique(); complete_ids = complete_ids[complete_ids.eq(11)].index
     complete = observed[observed["identity_unit_id"].isin(complete_ids)].copy()
@@ -177,6 +247,7 @@ def build_full_grid() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.Data
 
 
 def _metrics(frame: pd.DataFrame) -> dict[str, float]:
+    """Error metrics on log10(DVI), including fold-accuracy fractions."""
     residual = frame["residual_log10"].to_numpy(float)
     absolute = np.abs(residual)
     return {
@@ -190,6 +261,12 @@ def _metrics(frame: pd.DataFrame) -> dict[str, float]:
 
 
 def summarize_metrics(observed_avg: pd.DataFrame, complete: pd.DataFrame) -> pd.DataFrame:
+    """Summarize both panels per split scheme, model, and comparator.
+
+    The observed panel keeps only identity units with at least six measured
+    tissues, so the index is not dominated by compounds measured in one or
+    two tissues.
+    """
     rows = []
     for (split_type, model, method), frame in observed_avg[observed_avg["n_tissues"] >= 6].groupby(["split_type", "model", "method"]):
         rows.append({"analysis": "observed_panel_ge6", "split_type": split_type, "model": model, "method": method, **_metrics(frame)})
@@ -199,6 +276,15 @@ def summarize_metrics(observed_avg: pd.DataFrame, complete: pd.DataFrame) -> pd.
 
 
 def paired_context_effects(observed_avg: pd.DataFrame) -> pd.DataFrame:
+    """Paired full-context effects on log10(DVI) against each comparator.
+
+    Comparators are paired on the same identity units, and the bootstrap
+    resamples parent groups rather than identity units so that the
+    resampling unit matches the leakage-control unit.
+
+    Because all comparators rest on the same retrospective data, these
+    intervals are descriptive and are not independent validation.
+    """
     cfg = load_config(); rng = np.random.default_rng(int(cfg["bootstrap_seed"])); n_boot = int(cfg["bootstrap_replicates"])
     rows = []
     keys = ["parent_group_id", "identity_unit_id"]
@@ -210,6 +296,7 @@ def paired_context_effects(observed_avg: pd.DataFrame) -> pd.DataFrame:
             paired = full.merge(comp, on=keys, validate="one_to_one")
             groups = paired["parent_group_id"].drop_duplicates().to_numpy()
             def effects(x: pd.DataFrame) -> tuple[float, float]:
+                """Signed RMSE and MAE differences, full context minus comparator."""
                 return (
                     float(np.sqrt(np.mean(x["full"] ** 2)) - np.sqrt(np.mean(x["comp"] ** 2))),
                     float(np.mean(np.abs(x["full"])) - np.mean(np.abs(x["comp"]))),
@@ -240,9 +327,17 @@ def paired_context_effects(observed_avg: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_literature_panel() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Propagate the PT and RR matched panels to DVI on each paper's own tissues.
+
+    Each source paper reports a different tissue panel, so each is
+    propagated over its own available tissues and the two are never pooled.
+    These are partial indices, not whole-body Vss.
+
+    Requires the locally reconstructed record-level panel written by
+    ``prepare_matched_panels.py``; that file is never distributed.
+    """
     cfg = load_config(); volumes = cfg["tissue_volumes_ml"]; bw = float(cfg["body_weight_g"])
-    path = STUDY_ROOT / "injection_study" / "results" / "analysis" / "separate_literature_benchmarks" / "direct_panel_record_predictions.csv"
-    data = pd.read_csv(path, encoding="utf-8-sig")
+    data = pd.read_csv(MATCHED_PANEL_RECORDS_PATH, encoding="utf-8-sig")
     data["volume_ml"] = data["Tissue_paper"].map(volumes)
     if data["volume_ml"].isna().any():
         raise RuntimeError("Literature panel contains unmapped tissues")
@@ -269,6 +364,12 @@ def build_literature_panel() -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 def run_analysis() -> dict[str, pd.DataFrame]:
+    """Run every propagation analysis and write the result tables.
+
+    Also summarizes each tissue's share of the predicted index, which shows
+    how strongly large-volume tissues dominate a volume-weighted endpoint
+    compared with a tissue-equal one.
+    """
     ANALYSIS_DIR.mkdir(parents=True, exist_ok=True)
     seed_identity, observed_avg = build_observed_panel()
     grid, dvi_avg, complete, reconstruction = build_full_grid()

@@ -1,3 +1,15 @@
+"""Synthetic-input smoke tests that run without any request-only data.
+
+Every fixture here is synthetic. The tests exercise contracts rather than
+accuracy: that the frozen configurations load, that each architecture runs
+forward under each context dimension and fusion position, that the statistical
+helpers return their documented values, and that the matched-panel builder
+works on value-free inputs.
+
+Nothing here validates a reported result; reproducing those requires the
+request-only data described in ``docs/data_schema.md``.
+"""
+
 import unittest
 
 import numpy as np
@@ -28,11 +40,19 @@ from rat_kp_dvi.analysis import _aggregate_panel
 
 
 class PublicSmokeTests(unittest.TestCase):
+    """Contract checks that run on synthetic inputs alone."""
     def test_frozen_configs_load(self):
+        """Both frozen configurations load and declare the study target."""
         self.assertEqual(load_legacy_config()["target"], "log10(Kp)")
         self.assertEqual(load_config(require_frozen=True)["target"], "log10(Kp)")
 
     def test_graph_model_forward_paths(self):
+        """Every PyG architecture runs forward under each context width and fusion position.
+
+        Covers structure-only (zero context width) plus one-hot and physiology at
+        both fusion positions, and asserts finite outputs of the expected shape.
+        D-MPNN is exercised separately in ``test_d_mpnn_parameterization``.
+        """
         for context_dim, position in (
             (0, "none"),
             (11, "early"),
@@ -56,6 +76,11 @@ class PublicSmokeTests(unittest.TestCase):
                 self.assertTrue(torch.isfinite(output).all())
 
     def test_d_mpnn_parameterization(self):
+        """Early and late fusion give the D-MPNN different parameter counts.
+
+        The two positions widen different layers, so equal counts would mean the
+        fusion position had not actually been applied.
+        """
         early = trainable_parameter_count(build_d_mpnn(11, "early"))
         late = trainable_parameter_count(build_d_mpnn(11, "late"))
         self.assertGreater(early, 0)
@@ -63,11 +88,21 @@ class PublicSmokeTests(unittest.TestCase):
         self.assertNotEqual(early, late)
 
     def test_statistical_helpers(self):
+        """The sign-flip p-value hits its exact analytic value and the interval is ordered.
+
+        For ten identical positive differences only the all-positive and all-negative
+        sign assignments reach the observed statistic, giving exactly 2/2**10.
+        """
         self.assertEqual(exact_sign_flip_pvalue(np.ones(10)), 2 / (2**10))
         low, high = percentile_seed_ci(np.linspace(-0.1, -0.01, 10), replicates=200)
         self.assertLess(low, high)
 
     def test_processed_manuscript_benchmark_metrics(self):
+        """Fold-accuracy metrics match hand-computed values on a constructed residual set.
+
+        Residuals are placed exactly at log10(2) and log10(4), which also checks that
+        a prediction sitting on a fold boundary counts as inside it.
+        """
         observed = np.array([0.0, 1.0, -1.0])
         predicted = np.array([0.0, 1.0 + np.log10(2.0), -1.0 - np.log10(4.0)])
         result = manuscript_metrics(observed, predicted)
@@ -76,6 +111,7 @@ class PublicSmokeTests(unittest.TestCase):
         self.assertTrue(np.isfinite(result["rmse_log10"]))
 
     def test_additional_context_and_dvi_helpers(self):
+        """The tissue intercept stays centered and DVI aggregation returns a positive index."""
         intercept = CenteredTissueIntercept(3)
         with torch.no_grad():
             intercept.raw_effect.copy_(torch.tensor([1.0, 2.0, 4.0]))
@@ -98,6 +134,7 @@ class PublicSmokeTests(unittest.TestCase):
         self.assertGreater(float(result.loc[0, "observed_dvi_true_L_per_kg"]), 0.0)
 
     def test_value_free_matched_panel_builder(self):
+        """The matched-panel builder links and pools records without any real values."""
         processed = pd.DataFrame(
             {
                 "row_index": [1],

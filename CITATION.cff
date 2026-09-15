@@ -1,7 +1,19 @@
 cff-version: 1.2.0
 message: "Please cite the associated manuscript and this software."
 title: "RatKpContext: software for tissue-context GNN evaluation in rat Kp prediction"
+abstract: "Model definitions, training and evaluation pipelines, frozen configurations, statistical analysis, DVI output propagation, matched-panel construction, and figure generation for a study of tissue-context effects in graph neural networks for rat tissue-to-plasma partition coefficient (Kp) prediction."
 type: software
+version: "0.1.0"
+date-released: "2026-09-09"
+license: Apache-2.0
+repository-code: "https://github.com/Pluswick/RKpC-Benchmark"
+url: "https://github.com/Pluswick/RKpC-Benchmark"
+keywords:
+  - graph neural network
+  - tissue-to-plasma partition coefficient
+  - physiologically based pharmacokinetic modeling
+  - molecular property prediction
+  - reproducibility
 authors:
   - family-names: "Kim"
     given-names: "Seonghan"
@@ -17,4 +29,46 @@ authors:
     given-names: "Kyeong-Ryoon"
   - family-names: "Jeong"
     given-names: "Daesik"
-license: Apache-2.0
+references:
+  # Aggregate outputs, run metadata, index-only splits, and hashes. The DOI below
+  # is the all-versions (concept) DOI and resolves to the latest deposited version.
+  - type: data
+    title: "RatKpContext Benchmark (RKpC Benchmark): Aggregate Evaluation Outputs and Reproducibility Metadata for Tissue-Context-Aware Rat Kp Prediction"
+    doi: "10.5281/zenodo.22671239"
+    year: 2026
+    authors:
+      - family-names: "Kim"
+        given-names: "Seonghan"
+      - family-names: "Cho"
+        given-names: "Hyunseo"
+      - family-names: "Jeong"
+        given-names: "Hyeon-Cheol"
+      - family-names: "Jeong"
+        given-names: "Moonkyu"
+      - family-names: "Ko"
+        given-names: "Kyong-Cheol"
+      - family-names: "Lee"
+        given-names: "Kyeong-Ryoon"
+      - family-names: "Jeong"
+        given-names: "Daesik"
+  # The associated manuscript. Journal, year, volume, and DOI are deliberately
+  # omitted until publication rather than guessed; complete this entry, and add a
+  # matching preferred-citation, once the article is accepted.
+  - type: article
+    title: "Dissecting Tissue-Context Effects in Graph Neural Networks for Rat Kp Prediction: Additive Shifts, Fusion Position, and Extrapolation"
+    notes: "Manuscript under review; citation details to be completed on publication."
+    authors:
+      - family-names: "Kim"
+        given-names: "Seonghan"
+      - family-names: "Cho"
+        given-names: "Hyunseo"
+      - family-names: "Jeong"
+        given-names: "Hyeon-Cheol"
+      - family-names: "Jeong"
+        given-names: "Moonkyu"
+      - family-names: "Ko"
+        given-names: "Kyong-Cheol"
+      - family-names: "Lee"
+        given-names: "Kyeong-Ryoon"
+      - family-names: "Jeong"
+        given-names: "Daesik"

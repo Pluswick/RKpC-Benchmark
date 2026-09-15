@@ -32,10 +32,17 @@ UNIT_COLUMNS = ("parent_group_id", "identity_unit_id", "SMILES")
 
 
 def fmt(value: float, digits: int = 3) -> str:
+    """Format a number for the written summary at a fixed number of decimals."""
     return f"{value:.{digits}f}"
 
 
 def part1_direct_encoding_comparison() -> pd.DataFrame:
+    """Compare the two context encodings head to head on paired split seeds.
+
+    The prespecified contrasts compare each encoding against structure only;
+    this contrasts one-hot against physiology directly. It is descriptive and
+    sits outside the prespecified multiplicity families.
+    """
     rows = []
     for analysis_set in ANALYSIS_SETS:
         paired = read_csv(
@@ -63,6 +70,15 @@ def part1_direct_encoding_comparison() -> pd.DataFrame:
 
 
 def loto_overlap() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Quantify how much compound overlap each LOTO fold carries.
+
+    LOTO holds out a tissue, not a compound, so a test compound may also appear
+    in training under a different tissue. That is intended -- the question is
+    extrapolation to a new tissue, not a new molecule -- but the extent of the
+    overlap has to be reported for the result to be interpretable.
+
+    Returns the per-fold detail and its summary.
+    """
     data = read_csv(LONG_DATA_PATH)
     rows = []
     for heldout in sorted(data["Tissue"].unique()):
@@ -108,6 +124,12 @@ def loto_overlap() -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 def loto_posthoc_robustness() -> pd.DataFrame:
+    """Re-derive LOTO effects with adipose excluded.
+
+    Adipose is the most extreme tissue in physiology-descriptor space, so it can
+    dominate an effect averaged over tissues. Recomputing without it shows
+    whether a conclusion rests on that single fold. Post hoc and descriptive.
+    """
     rows = []
     for analysis_set in ANALYSIS_SETS:
         effects = read_csv(ANALYSIS_RESULT_DIR / analysis_set / "loto_tissue_effects.csv")
@@ -132,6 +154,11 @@ def loto_posthoc_robustness() -> pd.DataFrame:
 
 
 def adipose_seed_diagnostics() -> pd.DataFrame:
+    """Report training-seed spread for the adipose LOTO fold.
+
+    Separates seed-to-seed instability from a genuine tissue effect in the fold
+    that most influences the LOTO averages.
+    """
     rows = []
     for analysis_set in ANALYSIS_SETS:
         metrics = read_csv(ANALYSIS_RESULT_DIR / analysis_set / "all_job_metrics.csv")
@@ -186,6 +213,7 @@ def write_summary(
     robust: pd.DataFrame,
     seed_diagnostics: pd.DataFrame,
 ) -> None:
+    """Write the human-readable summary document for the core-stage results."""
     part1_counts = []
     for analysis_set in ANALYSIS_SETS:
         effects = read_csv(ANALYSIS_RESULT_DIR / analysis_set / "part1_context_effects.csv")
@@ -297,6 +325,7 @@ def write_summary(
 
 
 def main() -> None:
+    """Build every summary table and write the summary document."""
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     direct = part1_direct_encoding_comparison()
     overlap_by_tissue, overlap_summary = loto_overlap()

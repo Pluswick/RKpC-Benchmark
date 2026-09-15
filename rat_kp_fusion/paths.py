@@ -1,3 +1,9 @@
+"""Repository-relative locations for the tissue-context/fusion-position study.
+
+``EXTENSION_ROOT`` is named ``injection_study`` on disk; see
+``docs/terminology.md`` for the mapping to the manuscript wording.
+"""
+
 from pathlib import Path
 
 

@@ -26,6 +26,11 @@ THRESHOLDS = {"f2": 2.0, "f3": 3.0, "f4": 4.0}
 
 
 def _bootstrap_mean_ci(values: np.ndarray, seed_offset: int = 0) -> tuple[float, float]:
+    """Percentile bootstrap interval for a mean over split seeds.
+
+    ``seed_offset`` is added to the module seed so every summarized quantity
+    draws its own resampling indices while staying exactly reproducible.
+    """
     values = np.asarray(values, dtype=float)
     if values.ndim != 1 or not len(values) or not np.isfinite(values).all():
         raise ValueError("Bootstrap input must be a non-empty finite vector")
@@ -36,6 +41,12 @@ def _bootstrap_mean_ci(values: np.ndarray, seed_offset: int = 0) -> tuple[float,
 
 
 def _add_fold_columns(predictions: pd.DataFrame) -> pd.DataFrame:
+    """Attach absolute log10 error, fold error, and the fold-accuracy flags.
+
+    A prediction is within k-fold when its absolute log10 error is at most
+    log10(k). The small tolerance keeps a prediction sitting exactly on a
+    fold boundary from being excluded by floating-point representation.
+    """
     result = predictions.copy()
     result["abs_log10_error"] = np.abs(
         result["y_pred"].to_numpy(float) - result["y_true"].to_numpy(float)
@@ -47,6 +58,12 @@ def _add_fold_columns(predictions: pd.DataFrame) -> pd.DataFrame:
 
 
 def _metric_row(frame: pd.DataFrame) -> dict[str, float | int]:
+    """Fold-accuracy and error-magnitude metrics for one group of predictions.
+
+    Reports the median and 90th-percentile fold error alongside the mean,
+    because fold error is right-skewed and a mean alone hides the tail that
+    matters for deployment.
+    """
     abs_errors = frame["abs_log10_error"].to_numpy(float)
     fold_errors = frame["absolute_fold_error"].to_numpy(float)
     return {
@@ -63,6 +80,11 @@ def _metric_row(frame: pd.DataFrame) -> dict[str, float | int]:
 
 
 def make_job_metrics(predictions: pd.DataFrame) -> pd.DataFrame:
+    """Compute fold-accuracy metrics per job, asserting the frozen job grid.
+
+    The 40 model-condition-split combinations by 10 split seeds are checked
+    explicitly, so a partially loaded result set cannot be summarized.
+    """
     grouping = [
         "job_id", "model", "condition", "split_type", "split_seed", "training_seed"
     ]
@@ -81,6 +103,12 @@ def _parent_macro_summary(
     predictions: pd.DataFrame,
     grouping: list[str],
 ) -> pd.DataFrame:
+    """Fold accuracy with each parent group weighted equally.
+
+    Records are unevenly distributed across compounds, so a record-level mean is
+    dominated by the best-sampled ones. Averaging within parent group first
+    answers the per-compound question instead.
+    """
     parent_metrics = (
         predictions.groupby(grouping + ["parent_group_id"], as_index=False, sort=True)
         .agg(
@@ -107,6 +135,13 @@ def _parent_macro_summary(
 
 
 def make_combination_summary(predictions: pd.DataFrame, jobs: pd.DataFrame) -> pd.DataFrame:
+    """Summarize fold accuracy per model, condition, and split scheme.
+
+    Intervals are taken over split seeds, so they describe variation across
+    resampled data partitions rather than across individual records. A
+    parent-group macro summary is merged in alongside, which weights each
+    parent group equally instead of letting well-sampled compounds dominate.
+    """
     grouping = ["split_type", "model", "condition"]
     rows = []
     for group_index, (key, frame) in enumerate(jobs.groupby(grouping, sort=True)):
@@ -131,6 +166,7 @@ def make_combination_summary(predictions: pd.DataFrame, jobs: pd.DataFrame) -> p
 
 
 def make_tissue_summary(predictions: pd.DataFrame) -> pd.DataFrame:
+    """Summarize fold accuracy per tissue, aggregated within split seed first."""
     job_grouping = ["split_type", "model", "condition", "split_seed", "Tissue"]
     job_tissue_rows = []
     for key, frame in predictions.groupby(job_grouping, sort=True):
@@ -160,6 +196,7 @@ def make_tissue_summary(predictions: pd.DataFrame) -> pd.DataFrame:
 
 
 def main() -> None:
+    """Compute fold-accuracy summaries from the frozen predictions, without retraining."""
     load_config(require_frozen=True)
     plan = build_plan()
     primary_part1 = plan[(plan["analysis_set"] == "primary") & (plan["stage"] == "part1")].copy()

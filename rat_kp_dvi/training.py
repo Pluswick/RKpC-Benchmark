@@ -1,3 +1,21 @@
+"""Refit the representative full-context runs and emit 11-tissue predictions.
+
+The stored study predictions cover only each row's own tissue, so generating a
+complete tissue grid requires the fitted states themselves. This module
+reproduces a frozen job under its recorded seed and configuration, verifies
+that it reproduces the stored test predictions, and only then uses the fitted
+state to predict every tissue for each test molecule.
+
+That verification is load-bearing. Checkpoints from the original runs were not
+retained, so a refit that fails to reproduce the stored predictions invalidates
+the grid built from it. ``execute_job`` therefore compares the refit test
+predictions against the canonical ones and refuses to emit a grid when the
+maximum absolute difference exceeds 1e-4 log10 units, recording the failure in
+``REPRODUCIBILITY_FAILURE.json``. This is why the scaffold D-MPNN full-grid
+analysis is excluded; see the ``protocol_amendment`` block in the DVI
+configuration.
+"""
+
 from __future__ import annotations
 
 import json
@@ -27,6 +45,11 @@ from .paths import EXPERIMENT_DIR
 
 
 def _full_grid(test: pd.DataFrame) -> pd.DataFrame:
+    """Expand each test molecule to all 11 tissues for grid inference.
+
+    The target column is filled with a placeholder because these rows exist only
+    to be predicted; nothing reads their target.
+    """
     tissues = list(load_config()["tissue_volumes_ml"])
     identities = test[["parent_group_id", "identity_unit_id", "Drug", "SMILES"]].drop_duplicates()
     rows = []
@@ -45,12 +68,18 @@ def _full_grid(test: pd.DataFrame) -> pd.DataFrame:
 
 
 def _canonical_path(job: pd.Series) -> Path:
+    """Locate the stored predictions this job must reproduce.
+
+    Reused core-stage rows point into the core results tree rather than this
+    study's; see ``docs/terminology.md``.
+    """
     if str(job["execution_mode"]) == "legacy_reuse":
         return STUDY_ROOT / str(job["legacy_result_path"]) / "predictions.csv"
     return INJECTION_RESULT_DIR / str(job["analysis_set"]) / str(job["stage"]) / str(job["job_id"]) / "predictions.csv"
 
 
 def _fit_predict(job: pd.Series, frames: dict[str, pd.DataFrame], contexts: dict[str, np.ndarray], device: str):
+    """Refit one job and predict both the test partition and the full grid."""
     if str(job["model"]) == "gine":
         graphs = _pyg_datasets(frames, contexts)
         loaders = _pyg_loaders(graphs, int(job["training_seed"]))
@@ -116,6 +145,14 @@ def _fit_predict(job: pd.Series, frames: dict[str, pd.DataFrame], contexts: dict
 
 
 def execute_job(job: pd.Series, *, device: str = "gpu") -> Path:
+    """Refit one frozen job and emit an 11-tissue grid, gated on reproduction.
+
+    The refit test predictions are compared against the stored canonical ones and
+    the grid is written only if the maximum absolute difference is at most 1e-4
+    log10 units. On failure the discrepancy is recorded in
+    ``REPRODUCIBILITY_FAILURE.json`` and the job raises, so a grid can never rest
+    on a model that did not reproduce.
+    """
     load_base_config(require_frozen=True)
     output = EXPERIMENT_DIR / str(job["split_type"]) / str(job["job_id"])
     marker = output / "COMPLETE"

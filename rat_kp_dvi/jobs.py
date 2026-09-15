@@ -1,3 +1,11 @@
+"""Select the full-context jobs whose fitted states drive 11-tissue inference.
+
+Rather than defining new jobs, this narrows the frozen context/fusion-position
+plan to the representative model and condition named in the DVI configuration
+for each split scheme. The count is asserted so that a plan or configuration
+change cannot quietly alter which runs the propagation analysis rests on.
+"""
+
 from __future__ import annotations
 
 import pandas as pd
@@ -7,6 +15,13 @@ from .config import load_config
 
 
 def build_full_context_jobs() -> pd.DataFrame:
+    """Select the frozen full-context jobs used for complete 11-tissue inference.
+
+    Narrows the frozen plan to the representative model and condition named in
+    the DVI configuration for each split scheme; the expected count is asserted
+    so a plan or configuration change cannot quietly alter which runs the
+    propagation analysis rests on.
+    """
     cfg = load_config()
     plan = build_injection_plan()
     selected = []
